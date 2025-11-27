@@ -1,0 +1,9 @@
+config.py
+venv/*
+__pycache__/
+.DS_Store
+wsgi.py
+media/*
+.idea/
+f49dii493nd.sqlite3
+db.sqlite3
