@@ -1,46 +1,38 @@
-import hashlib
-import hmac
 import logging
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 
-def verify_radario_webhook(payload, received_checksum):
-    """Проверка подлинности вебхука от Радарио"""
-    if not settings.RADARIO_WEBHOOK_SECRET:
-        logger.warning("RADARIO_WEBHOOK_SECRET not set, skipping verification")
-        return True
-
-    # Создаем ожидаемую checksum
-    message = f"{payload['notification']['salt']}{payload['notification']['timestamp']}"
-    expected_checksum = hmac.new(
-        settings.RADARIO_WEBHOOK_SECRET.encode('utf-8'),
-        message.encode('utf-8'),
-        hashlib.sha256
-    ).hexdigest()
-
-    return hmac.compare_digest(expected_checksum, received_checksum)
+def verify_radario_webhook(payload):
+    """Проверка вебхука от Радарио (без секретного ключа)"""
+    # Так как Радарио не использует секретный ключ, просто проверяем наличие обязательных полей
+    required_fields = ['Id', 'Email', 'Status', 'Event']
+    if not all(field in payload for field in required_fields):
+        return False
+    return True
 
 
 def extract_customer_info(webhook_data):
-    """Извлечение информации о покупателе из вебхука"""
+    """Извлечение информации о покупателе из вебхука Радарио"""
     try:
-        order_data = webhook_data['notification']['model']
+        email = webhook_data.get('Email', '')
 
-        # В вебхуке Радарио может не быть явных полей покупателя
-        # Используем email из заказа и создаем имя из доступных данных
-        email = order_data.get('email', '')
-
-        # Пытаемся извлечь имя из различных полей
+        # Извлекаем имя из билетов или пользователя
         name = "Покупатель билета"  # значение по умолчанию
 
-        # Если есть информация о билетах, можно попробовать извлечь оттуда
-        tickets = order_data.get('tickets', [])
-        if tickets and tickets[0].get('ownerName'):
-            name = tickets[0]['ownerName']
+        # Пробуем получить имя из первого билета
+        tickets = webhook_data.get('Tickets', [])
+        if tickets and tickets[0].get('OwnerName'):
+            name = tickets[0]['OwnerName']
+        # Или из данных пользователя
+        elif webhook_data.get('User') and webhook_data['User'].get('Name'):
+            name = webhook_data['User']['Name']
 
-        phone = order_data.get('phone', '')
+        # Извлекаем телефон
+        phone = ''
+        if webhook_data.get('User') and webhook_data['User'].get('Phone'):
+            phone = webhook_data['User']['Phone']
 
         return {
             'email': email,
@@ -50,7 +42,7 @@ def extract_customer_info(webhook_data):
     except Exception as e:
         logger.error(f"Error extracting customer info: {e}")
         return {
-            'email': '',
+            'email': webhook_data.get('Email', ''),
             'name': 'Покупатель билета',
             'phone': ''
         }
@@ -58,10 +50,19 @@ def extract_customer_info(webhook_data):
 
 def create_lead_name(event_data, order_id):
     """Создание названия для сделки в amoCRM"""
-    event_title = event_data.get('title', 'Мероприятие')
-    event_date = event_data.get('beginDate', '').split('T')[0]  # Берем только дату
+    event_title = event_data.get('Title', 'Мероприятие')
+    event_date = event_data.get('BeginDate', '').split('T')[0]  # Берем только дату
 
     if event_date:
         return f"Билет на {event_title} ({event_date}) - Заказ #{order_id}"
     else:
         return f"Билет на {event_title} - Заказ #{order_id}"
+
+
+def should_process_order(webhook_data):
+    """Проверяем, нужно ли обрабатывать заказ"""
+    status = webhook_data.get('Status')
+    payment_status = webhook_data.get('PaymentSystemStatus')
+
+    # Обрабатываем только оплаченные заказы
+    return (status == 'Paid' and payment_status == 'Paid')

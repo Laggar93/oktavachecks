@@ -6,7 +6,7 @@ from django.views.decorators.http import require_http_methods
 from django.utils import timezone
 from .models import WebhookLog
 from .amocrm_client import AmoCRMClient
-from .utils import verify_radario_webhook, extract_customer_info, create_lead_name
+from .utils import verify_radario_webhook, extract_customer_info, create_lead_name, should_process_order
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ def radario_webhook(request):
 
     # Логируем сырые данные для отладки
     raw_body = request.body.decode('utf-8')
-    logger.info(f"Received webhook: {raw_body}")
+    logger.info(f"Received Radario webhook: {raw_body}")
 
     try:
         payload = json.loads(raw_body)
@@ -30,26 +30,15 @@ def radario_webhook(request):
     webhook_log = WebhookLog.objects.create(payload=payload)
 
     try:
-        # Проверяем тип уведомления
-        notification_type = payload['notification']['type']
-
-        if notification_type not in ['OrderPurchaseNM', 'OrderRefundNM']:
+        # Проверяем обязательные поля (без секретного ключа)
+        if not verify_radario_webhook(payload):
             webhook_log.status = 'error'
-            webhook_log.error_message = f"Unsupported notification type: {notification_type}"
+            webhook_log.error_message = 'Missing required fields'
             webhook_log.save()
-            return JsonResponse({'status': 'ignored', 'message': 'Unsupported notification type'})
+            return JsonResponse({'status': 'error', 'message': 'Missing required fields'}, status=400)
 
-        # Проверяем подлинность вебхука
-        received_checksum = payload['notification'].get('checksum', '')
-        if not verify_radario_webhook(payload, received_checksum):
-            webhook_log.status = 'error'
-            webhook_log.error_message = 'Invalid checksum'
-            webhook_log.save()
-            return JsonResponse({'status': 'error', 'message': 'Invalid checksum'}, status=403)
-
-        # Обрабатываем только оплаченные заказы
-        order_data = payload['notification']['model']
-        if order_data.get('status') != 'Paid' or order_data.get('paymentSystemStatus') != 'Paid':
+        # Проверяем, нужно ли обрабатывать заказ (только оплаченные)
+        if not should_process_order(payload):
             webhook_log.status = 'success'
             webhook_log.error_message = 'Order not paid, skipping'
             webhook_log.save()
@@ -84,9 +73,9 @@ def radario_webhook(request):
             logger.info(f"Created new contact: {contact_id}")
 
         # Создаем сделку
-        event_data = order_data['event']
-        lead_name = create_lead_name(event_data, order_data['id'])
-        amount = float(order_data['amount'])
+        event_data = payload['Event']
+        lead_name = create_lead_name(event_data, payload['Id'])
+        amount = float(payload['Amount'])
 
         lead = amocrm.create_lead(
             contact_id=contact_id,
