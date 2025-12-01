@@ -122,10 +122,15 @@ class AmoCRMClient:
             raise
 
     def create_lead(self, contact_id, lead_name, amount):
-        """Создание сделки"""
+        """Создание сделки в воронке Музей на этапе Новая заявка"""
+        # amount - сумма в рублях (может быть float: 1000.50)
+        price = int(round(float(amount) * 100))  # Конвертируем в копейки
+
         lead_data = {
             "name": lead_name,
-            "price": int(amount * 100),
+            "price": price,  # В копейках
+            "pipeline_id": 9713218,  # ID воронки "Музей"
+            "status_id": 77419818,  # ID этапа "Новая заявка"
             "_embedded": {
                 "contacts": [{"id": contact_id}]
             }
