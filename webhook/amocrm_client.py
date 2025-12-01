@@ -52,7 +52,7 @@ class AmoCRMClient:
     def create_lead(self, contact_id, lead_name, amount):
         """Простой метод создания сделки для тестирования"""
         # Сумма в копейках
-        price = int(float(amount) * 100)
+        price = int(float(amount))
 
         lead_data = {
             "name": lead_name,
@@ -204,7 +204,7 @@ class AmoCRMClient:
         lead_name = f"[{customer_info['source']}] оплата [{event_type}]"
 
         # Сумма в копейках
-        price = int(customer_info['amount'] * 100)
+        price = int(customer_info['amount'])
 
         # Статус и этап
         is_paid = (customer_info['status'] == 'Paid' and
@@ -328,7 +328,7 @@ class AmoCRMClient:
 
         update_data = {
             "id": lead_id,
-            "price": int(customer_info['amount'] * 100),  # Обновляем сумму
+            "price": int(customer_info['amount']),  # Обновляем сумму
             "custom_fields_values": [
                 {
                     "field_id": 986105,  # Статус
