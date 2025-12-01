@@ -36,7 +36,7 @@ class AmoCRMClient:
                 "client_secret": settings.AMOCRM_CLIENT_SECRET,
                 "grant_type": "refresh_token",
                 "refresh_token": settings.AMOCRM_REFRESH_TOKEN,
-                "redirect_uri": "http://oktavachecks.twc1.net/integration/"
+                "redirect_uri": "http://oktavachecks.twc1.net/"
             }
 
             response = requests.post(url, json=data)
