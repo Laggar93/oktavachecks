@@ -57,8 +57,8 @@ class AmoCRMClient:
         lead_data = {
             "name": lead_name,
             "price": price,
-            "pipeline_id": 9713218,  # Воронка "Музей"
-            "status_id": 77419818,  # Этап "Новая заявка"
+            "pipeline_id": 9713218,  # Воронка "Музей" ✓
+            "status_id": 77419554,  # Этап "Новая заявка" ✓ (ИСПРАВЛЕНО!)
             "_embedded": {
                 "contacts": [{"id": contact_id}]
             }
@@ -213,7 +213,7 @@ class AmoCRMClient:
         pipeline_id = 9713218  # Воронка "Музей"
 
         if is_paid:
-            status_id = 77419818  # Новая заявка
+            status_id = 77419554  # Новая заявка
         else:
             status_id = 142  # Первичный контакт (или другой дефолтный)
 
