@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 @csrf_exempt
 @require_http_methods(["POST"])
 def radario_webhook(request):
-    """Обработчик вебхуков от Радарио - полная версия по ТЗ"""
+    """Обработчик вебхуков от Радарио"""
 
     raw_body = request.body.decode('utf-8')
     logger.info(f"Received Radario webhook: {raw_body[:500]}...")
@@ -47,22 +47,13 @@ def radario_webhook(request):
         # Работа с amoCRM
         amocrm = AmoCRMClient()
 
-        # 1. Ищем существующий контакт по email или телефону
-        contact = None
-        if customer_info['email']:
-            contact = amocrm.find_contact_by_email(customer_info['email'])
-
-        # Если не нашли по email, ищем по телефону (если нужно)
-        if not contact and customer_info['phone']:
-            contact = amocrm.find_contact_by_phone(customer_info['phone'])
+        # 1. Ищем существующий контакт
+        contact = amocrm.find_contact_by_email(customer_info['email'])
 
         if contact:
-            # Контакт существует
             contact_id = contact['id']
             logger.info(f"Found existing contact: {contact_id}")
-            # Можно обновить контакт если нужно
         else:
-            # Создаем новый контакт
             contact = amocrm.create_contact(
                 email=customer_info['email'],
                 name=customer_info['name'],
@@ -71,43 +62,20 @@ def radario_webhook(request):
             contact_id = contact['id']
             logger.info(f"Created new contact: {contact_id}")
 
-        # 2. Ищем существующую сделку по номеру заказа
-        order_id = customer_info['order_id']
-        existing_lead = amocrm.find_lead_by_order_id(order_id)
+        # 2. Создаем сделку
+        # Получаем event из model
+        model = payload.get('model', {})
+        event_data = model.get('Event', {}) or model.get('event', {})
 
-        if existing_lead:
-            # Сделка существует - ОБНОВЛЯЕМ
-            logger.info(f"Found existing lead: {existing_lead['id']}")
+        lead_name = create_lead_name(event_data, customer_info['order_id'])
 
-            # Проверяем статус на возврат
-            is_refund = (customer_info['status'] == 'Refund' or
-                         customer_info['payment_system_status'] == 'Refund')
-
-            if is_refund:
-                # Обработка возврата
-                lead = amocrm.update_lead_for_refund(
-                    lead_id=existing_lead['id'],
-                    customer_info=customer_info
-                )
-                logger.info(f"Updated lead for refund: {existing_lead['id']}")
-            else:
-                # Обновление других данных
-                lead = amocrm.update_lead(
-                    lead_id=existing_lead['id'],
-                    customer_info=customer_info
-                )
-                logger.info(f"Updated existing lead: {existing_lead['id']}")
-
-            lead_id = existing_lead['id']
-        else:
-            # Создаем новую сделку
-            logger.info(f"Creating new lead for order: {order_id}")
-            lead = amocrm.create_lead_with_custom_fields(
-                contact_id=contact_id,
-                customer_info=customer_info
-            )
-            lead_id = lead['id']
-            logger.info(f"Created new lead: {lead_id}")
+        lead = amocrm.create_lead(
+            contact_id=contact_id,
+            lead_name=lead_name,
+            amount=customer_info['amount']
+        )
+        lead_id = lead['id']
+        logger.info(f"Created lead: {lead_id}")
 
         # Обновляем лог
         webhook_log.status = 'success'
@@ -119,8 +87,7 @@ def radario_webhook(request):
         return JsonResponse({
             'status': 'success',
             'contact_id': contact_id,
-            'lead_id': lead_id,
-            'action': 'updated' if existing_lead else 'created'
+            'lead_id': lead_id
         })
 
     except Exception as e:
