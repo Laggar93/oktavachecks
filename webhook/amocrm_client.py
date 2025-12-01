@@ -49,6 +49,28 @@ class AmoCRMClient:
             logger.error(f"Error finding contact by email {email}: {e}")
             return None
 
+    def create_lead(self, contact_id, lead_name, amount):
+        """Простой метод создания сделки для тестирования"""
+        # Сумма в копейках
+        price = int(float(amount) * 100)
+
+        lead_data = {
+            "name": lead_name,
+            "price": price,
+            "pipeline_id": 9713218,  # Воронка "Музей"
+            "status_id": 77419818,  # Этап "Новая заявка"
+            "_embedded": {
+                "contacts": [{"id": contact_id}]
+            }
+        }
+
+        try:
+            data = self._make_request('POST', 'leads', [lead_data])
+            return data['_embedded']['leads'][0]
+        except Exception as e:
+            logger.error(f"Error creating lead: {e}")
+            raise
+
     def find_contact_by_phone(self, phone):
         """Поиск контакта по телефону"""
         try:
