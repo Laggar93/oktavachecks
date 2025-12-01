@@ -1,8 +1,9 @@
 import requests
 import logging
+import json
+import time
+from datetime import datetime
 from django.conf import settings
-from django.core.cache import cache
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -11,81 +12,33 @@ class AmoCRMClient:
     def __init__(self):
         self.subdomain = settings.AMOCRM_SUBDOMAIN
         self.base_url = f"https://{self.subdomain}.amocrm.ru/api/v4"
-        self._ensure_valid_token()
-        self.headers = {
-            'Authorization': f'Bearer {self.get_access_token()}',
-            'Content-Type': 'application/json'
-        }
-
-    def _ensure_valid_token(self):
-        """Проверяем и обновляем токен если нужно"""
-        token_expiry = cache.get('amocrm_token_expiry')
-        if not token_expiry or datetime.now() > token_expiry:
-            self._refresh_access_token()
-
-    def get_access_token(self):
-        """Получаем текущий access token"""
-        return cache.get('amocrm_access_token') or settings.AMOCRM_ACCESS_TOKEN
-
-    def _refresh_access_token(self):
-        """Обновляем access token используя refresh token"""
-        try:
-            url = f"https://{self.subdomain}.amocrm.ru/oauth2/access_token"
-            data = {
-                "client_id": settings.AMOCRM_CLIENT_ID,
-                "client_secret": settings.AMOCRM_CLIENT_SECRET,
-                "grant_type": "refresh_token",
-                "refresh_token": settings.AMOCRM_REFRESH_TOKEN,
-                "redirect_uri": "http://oktavachecks.twc1.net/"
-            }
-
-            response = requests.post(url, json=data)
-            tokens = response.json()
-
-            if 'access_token' in tokens:
-                # Сохраняем новые токены в кэш
-                cache.set('amocrm_access_token', tokens['access_token'], 60 * 60 * 23)  # 23 часа
-                cache.set('amocrm_refresh_token', tokens['refresh_token'], 60 * 60 * 24 * 89)  # 89 дней
-
-                # Время истечения токена (24 часа от сейчас)
-                expiry_time = datetime.now() + timedelta(hours=23, minutes=50)
-                cache.set('amocrm_token_expiry', expiry_time)
-
-                logger.info("AmoCRM tokens refreshed successfully")
-            else:
-                logger.error(f"Token refresh failed: {tokens}")
-
-        except Exception as e:
-            logger.error(f"Error refreshing AmoCRM token: {e}")
+        self.access_token = settings.AMOCRM_ACCESS_TOKEN
 
     def _make_request(self, method, endpoint, data=None):
-        """Делаем запрос с автоматическим обновлением токена при 401 ошибке"""
-        self._ensure_valid_token()
-
+        """Упрощенный запрос"""
         url = f"{self.base_url}/{endpoint}"
         headers = {
-            'Authorization': f'Bearer {self.get_access_token()}',
+            'Authorization': f'Bearer {self.access_token}',
             'Content-Type': 'application/json'
         }
 
         try:
             response = requests.request(method, url, headers=headers, json=data, timeout=30)
 
-            # Если токен истек - обновляем и повторяем запрос
             if response.status_code == 401:
-                logger.info("Token expired, refreshing...")
-                self._refresh_access_token()
-                headers['Authorization'] = f'Bearer {self.get_access_token()}'
-                response = requests.request(method, url, headers=headers, json=data, timeout=30)
+                logger.error("Token invalid!")
+                raise Exception(f"Token invalid: {response.text}")
 
             response.raise_for_status()
-            return response.json() if response.content else {}
 
-        except requests.exceptions.RequestException as e:
+            if response.content:
+                return response.json()
+            return {}
+
+        except Exception as e:
             logger.error(f"AmoCRM API error: {e}")
             raise
 
-    # Остальные методы остаются без изменений
     def find_contact_by_email(self, email):
         """Поиск контакта по email"""
         try:
@@ -94,6 +47,16 @@ class AmoCRMClient:
             return data['_embedded']['contacts'][0] if data.get('_embedded', {}).get('contacts') else None
         except Exception as e:
             logger.error(f"Error finding contact by email {email}: {e}")
+            return None
+
+    def find_contact_by_phone(self, phone):
+        """Поиск контакта по телефону"""
+        try:
+            # Нужно настроить поиск по телефону
+            # Можно искать через кастомные поля
+            return None
+        except Exception as e:
+            logger.error(f"Error finding contact by phone {phone}: {e}")
             return None
 
     def create_contact(self, email, name, phone=None):
@@ -121,16 +84,182 @@ class AmoCRMClient:
             logger.error(f"Error creating contact: {e}")
             raise
 
-    def create_lead(self, contact_id, lead_name, amount):
-        """Создание сделки в воронке Музей на этапе Новая заявка"""
-        # amount - сумма в рублях (может быть float: 1000.50)
-        price = int(float(amount) * 100) # Конвертируем в копейки
+    def find_lead_by_order_id(self, order_id):
+        """Поиск сделки по номеру заказа"""
+        try:
+            # Поиск сделки по кастомному полю "Номер заказа" (986103)
+            endpoint = f"leads?filter[custom_fields_values][0][field_id]=986103&filter[custom_fields_values][0][values][0][value]={order_id}"
+            data = self._make_request('GET', endpoint)
+            return data['_embedded']['leads'][0] if data.get('_embedded', {}).get('leads') else None
+        except Exception as e:
+            logger.error(f"Error finding lead by order_id {order_id}: {e}")
+            return None
+
+    def _map_event_type(self, event_title):
+        """Сопоставление типа события по ТЗ"""
+        event_title_lower = event_title.lower()
+
+        mapping = {
+            'мастер-класс': 'Мастер-класс',
+            'мастер класс': 'Мастер-класс',
+            'программа': 'Программа',
+            'лекция': 'Лекция',
+            'театральное занятие': 'Театральное занятие',
+            'игра': 'Игра',
+            'резиденция': 'Резиденция',
+            'выставка': 'Выставка',
+            'спектакль': 'Спектакль',
+            'экскурсия': 'Экскурсия',
+            'концерт': 'Концерт',
+            'шоу': 'Шоу',
+            'комбо': 'Комбо',
+            'кинопоказ': 'Кинопоказ',
+            'конференция': 'Конференция',
+            'фестиваль': 'Фестиваль',
+            'творческая встреча': 'Творческая встреча',
+            'кинофестиваль': 'Кинофестиваль',
+            'открытый разговор': 'Открытый разговор',
+            'митап': 'Митап',
+            'мит-ап': 'Митап',
+            'дискуссия': 'Дискуссия',
+            'встреча': 'Встреча',
+            'перформанс': 'Перформанс',
+            'workshop': 'Workshop',
+            'воркшоп': 'Воркшоп',
+            'арт-терапия': 'Арт-терапия',
+            'занятие': 'Занятие',
+            'паблик-ток': 'Паблик-топ',
+            'ted-talk': 'TED-talk',
+            'показ': 'Показ',
+            'диалог': 'Диалог'
+        }
+
+        for key, value in mapping.items():
+            if key in event_title_lower:
+                return value
+
+        # Если не нашли соответствие, пытаемся определить по словам
+        for key in mapping.keys():
+            if key.replace('-', ' ') in event_title_lower:
+                return mapping[key]
+
+        return 'Другое'
+
+    def _convert_to_timestamp(self, date_string):
+        """Конвертация даты из Radario в timestamp"""
+        if not date_string:
+            return int(time.time())
+
+        try:
+            # Пробуем разные форматы дат
+            formats = [
+                '%Y-%m-%dT%H:%M:%S.%fZ',
+                '%Y-%m-%dT%H:%M:%SZ',
+                '%Y-%m-%d %H:%M:%S',
+                '%d.%m.%Y %H:%M:%S'
+            ]
+
+            for fmt in formats:
+                try:
+                    dt = datetime.strptime(date_string, fmt)
+                    return int(dt.timestamp())
+                except ValueError:
+                    continue
+
+            # Если не удалось распарсить, возвращаем текущее время
+            return int(time.time())
+
+        except Exception:
+            return int(time.time())
+
+    def create_lead_with_custom_fields(self, contact_id, customer_info):
+        """Создание сделки со всеми кастомными полями по ТЗ"""
+
+        # Определяем тип события
+        event_type = self._map_event_type(customer_info['event_title'])
+
+        # Название сделки по маске: [Источник заказа] оплата [Тип события]
+        lead_name = f"[{customer_info['source']}] оплата [{event_type}]"
+
+        # Сумма в копейках
+        price = int(customer_info['amount'] * 100)
+
+        # Статус и этап
+        is_paid = (customer_info['status'] == 'Paid' and
+                   customer_info['payment_system_status'] == 'Paid')
+
+        pipeline_id = 9713218  # Воронка "Музей"
+
+        if is_paid:
+            status_id = 77419818  # Новая заявка
+        else:
+            status_id = 142  # Первичный контакт (или другой дефолтный)
+
+        # Подготавливаем кастомные поля
+        custom_fields = [
+            # Номер заказа - id: 986103, тип: Число
+            {
+                "field_id": 986103,
+                "values": [{"value": customer_info['order_id']}]
+            },
+            # Тип события: id: 986255, тип: Список
+            {
+                "field_id": 986255,
+                "values": [{"enum_id": self._get_event_type_enum_id(event_type)}]
+            },
+            # Событие - id: 986251, тип: Текст
+            {
+                "field_id": 986251,
+                "values": [{"value": customer_info['event_title'][:100]}]  # Ограничиваем длину
+            },
+            # Дата и время начала события - id: 976983
+            {
+                "field_id": 976983,
+                "values": [{"value": self._convert_to_timestamp(customer_info['event_date'])}]
+            },
+            # Дата и время создания заказа - id: 986101
+            {
+                "field_id": 986101,
+                "values": [{"value": self._convert_to_timestamp(customer_info['creation_date'])}]
+            },
+            # Телефон - id: 648997
+            {
+                "field_id": 648997,
+                "values": [{"value": customer_info['phone']}]
+            } if customer_info['phone'] else None,
+            # Почта - id: 648999
+            {
+                "field_id": 648999,
+                "values": [{"value": customer_info['email']}]
+            },
+            # Источник заказа - id: 986099, тип: Список (Radario)
+            {
+                "field_id": 986099,
+                "values": [{"enum_id": self._get_source_enum_id(customer_info['source'])}]
+            },
+            # Билетов - id: 986253, тип: Число
+            {
+                "field_id": 986253,
+                "values": [{"value": customer_info['tickets_count']}]
+            }
+        ]
+
+        # Добавляем дату возврата если есть
+        if customer_info.get('refund_date'):
+            custom_fields.append({
+                "field_id": 986123,  # Дата и время возврата
+                "values": [{"value": self._convert_to_timestamp(customer_info['refund_date'])}]
+            })
+
+        # Удаляем None значения
+        custom_fields = [field for field in custom_fields if field is not None]
 
         lead_data = {
             "name": lead_name,
-            "price": price,  # В копейках
-            "pipeline_id": 9713218,  # ID воронки "Музей"
-            "status_id": 77419818,  # ID этапа "Новая заявка"
+            "price": price,
+            "pipeline_id": pipeline_id,
+            "status_id": status_id,
+            "custom_fields_values": custom_fields,
             "_embedded": {
                 "contacts": [{"id": contact_id}]
             }
@@ -140,5 +269,124 @@ class AmoCRMClient:
             data = self._make_request('POST', 'leads', [lead_data])
             return data['_embedded']['leads'][0]
         except Exception as e:
-            logger.error(f"Error creating lead: {e}")
+            logger.error(f"Error creating lead with custom fields: {e}")
             raise
+
+    def update_lead_for_refund(self, lead_id, customer_info):
+        """Обновление сделки при возврате"""
+        update_data = {
+            "id": lead_id,
+            "status_id": 143,  # Закрыто и не реализовано
+            "loss_reason_id": 976851,  # Причина отказа Музей
+            "custom_fields_values": [
+                {
+                    "field_id": 986123,  # Дата возврата
+                    "values": [{"value": self._convert_to_timestamp(customer_info.get('refund_date'))}]
+                } if customer_info.get('refund_date') else None
+            ]
+        }
+
+        # Удаляем None значения
+        update_data["custom_fields_values"] = [field for field in update_data["custom_fields_values"] if field is not None]
+
+        try:
+            data = self._make_request('PATCH', f'leads/{lead_id}', update_data)
+            return data
+        except Exception as e:
+            logger.error(f"Error updating lead for refund {lead_id}: {e}")
+            raise
+
+    def update_lead(self, lead_id, customer_info):
+        """Обновление сделки при изменении статуса/суммы"""
+        # Определяем статус для поля
+        status_value = self._map_status_for_field(
+            customer_info['status'],
+            customer_info['payment_system_status']
+        )
+
+        update_data = {
+            "id": lead_id,
+            "price": int(customer_info['amount'] * 100),  # Обновляем сумму
+            "custom_fields_values": [
+                {
+                    "field_id": 986105,  # Статус
+                    "values": [{"enum_id": self._get_status_enum_id(status_value)}]
+                }
+            ]
+        }
+
+        try:
+            data = self._make_request('PATCH', f'leads/{lead_id}', update_data)
+            return data
+        except Exception as e:
+            logger.error(f"Error updating lead {lead_id}: {e}")
+            raise
+
+    def _map_status_for_field(self, status, payment_system_status):
+        """Сопоставление статуса для поля 986105"""
+        if status == 'Paid' and payment_system_status == 'Paid':
+            return 'Оплачен'
+        elif status == 'Refund' or payment_system_status == 'Refund':
+            return 'Возврат'
+        elif status == 'Pending':
+            return 'В обработке'
+        elif status == 'Cancelled':
+            return 'Отменен'
+        else:
+            return 'Неизвестно'
+
+    def _get_event_type_enum_id(self, event_type):
+        """Получение enum_id для типа события"""
+        # TODO: Получить реальные ID из AmoCRM
+        # Временно используем заглушки
+        mapping = {
+            'Мастер-класс': 1,
+            'Программа': 2,
+            'Лекция': 3,
+            'Театральное занятие': 4,
+            'Игра': 5,
+            'Резиденция': 6,
+            'Выставка': 7,
+            'Спектакль': 8,
+            'Экскурсия': 9,
+            'Концерт': 10,
+            'Шоу': 11,
+            'Комбо': 12,
+            'Кинопоказ': 13,
+            'Конференция': 14,
+            'Фестиваль': 15,
+            'Творческая встреча': 16,
+            'Кинофестиваль': 17,
+            'Открытый разговор': 18,
+            'Митап': 19,
+            'Дискуссия': 20,
+            'Встреча': 21,
+            'Перформанс': 22,
+            'Workshop': 23,
+            'Воркшоп': 24,
+            'Арт-терапия': 25,
+            'Занятие': 26,
+            'Паблик-топ': 27,
+            'TED-talk': 28,
+            'Показ': 29,
+            'Диалог': 30,
+            'Другое': 31
+        }
+        return mapping.get(event_type, 31)  # По умолчанию "Другое"
+
+    def _get_source_enum_id(self, source):
+        """Получение enum_id для источника заказа"""
+        # TODO: Получить реальный ID для "Radario"
+        return 1  # Заглушка
+
+    def _get_status_enum_id(self, status):
+        """Получение enum_id для статуса"""
+        # TODO: Получить реальные ID
+        mapping = {
+            'Оплачен': 1,
+            'Возврат': 2,
+            'В обработке': 3,
+            'Отменен': 4,
+            'Неизвестно': 5
+        }
+        return mapping.get(status, 5)
