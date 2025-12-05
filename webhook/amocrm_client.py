@@ -26,7 +26,8 @@ class AmoCRMClient:
             response = requests.request(method, url, headers=headers, json=data, timeout=30)
 
             if response.status_code == 401:
-                logger.error("Token invalid!")
+                logger.error("Долгосрочный токен истек или неверный! Нужно обновить токен в amoCRM.")
+                logger.error(f"Полный ответ: {response.text}")
                 raise Exception(f"Token invalid: {response.text}")
 
             response.raise_for_status()
@@ -58,7 +59,7 @@ class AmoCRMClient:
             "name": lead_name,
             "price": price,
             "pipeline_id": 9713218,  # Воронка "Музей" ✓
-            "status_id": 77419554,  # Этап "Новая заявка" ✓ (ИСПРАВЛЕНО!)
+            "status_id": 77419554,  # Этап "Новая заявка" ✓
             "_embedded": {
                 "contacts": [{"id": contact_id}]
             }
@@ -84,7 +85,7 @@ class AmoCRMClient:
     def create_contact(self, email, name, phone=None):
         """Создание нового контакта"""
         contact_data = {
-            "name": name,
+            "name": name,  # Имя контакта передается правильно
             "custom_fields_values": [
                 {
                     "field_code": "EMAIL",
@@ -217,60 +218,84 @@ class AmoCRMClient:
         else:
             status_id = 142  # Первичный контакт (или другой дефолтный)
 
-        # Подготавливаем кастомные поля
+        # Подготавливаем кастомные поля (исправленные ID согласно реальным полям в amoCRM)
         custom_fields = [
-            # Номер заказа - id: 986103, тип: Число
+            # Номер заказа - id: 986103, тип: Число ✓
             {
                 "field_id": 986103,
                 "values": [{"value": customer_info['order_id']}]
             },
-            # Тип события: id: 986255, тип: Список
+            # Тип события - id: 986255, тип: Список ✓
             {
                 "field_id": 986255,
                 "values": [{"enum_id": self._get_event_type_enum_id(event_type)}]
             },
-            # Событие - id: 986251, тип: Текст
+            # Событие - id: 986251, тип: Текст ✓
             {
                 "field_id": 986251,
-                "values": [{"value": customer_info['event_title'][:100]}]  # Ограничиваем длину
+                "values": [{"value": customer_info['event_title'][:100]}]
             },
-            # Дата и время начала события - id: 976983
+            # Дата и время начала события - id: 976983 ✓ (Дата и время записи)
             {
                 "field_id": 976983,
                 "values": [{"value": self._convert_to_timestamp(customer_info['event_date'])}]
             },
-            # Дата и время создания заказа - id: 986101
+            # Дата и время оплаты - id: 986101, тип: date_time ✓ (исправлено!)
             {
                 "field_id": 986101,
-                "values": [{"value": self._convert_to_timestamp(customer_info['creation_date'])}]
+                "values": [{"value": self._convert_to_timestamp(customer_info['payment_date'])}]
             },
-            # Телефон - id: 648997
+            # Вид оплаты - id: 986099, тип: select ✓ (исправлено! было "Источник заказа")
             {
-                "field_id": 648997,
-                "values": [{"value": customer_info['phone']}]
-            } if customer_info['phone'] else None,
-            # Почта - id: 648999
-            {
-                "field_id": 648999,
-                "values": [{"value": customer_info['email']}]
+                "field_id": 976809,  # "Источник" (используем для источника заказа)
+                "values": [{"value": customer_info['source']}]  # "Radario"
             },
-            # Источник заказа - id: 986099, тип: Список (Radario)
             {
-                "field_id": 986099,
-                "values": [{"enum_id": self._get_source_enum_id(customer_info['source'])}]
+                "field_id": 986099,  # "Вид оплаты" (заполняем значением "Онлайн")
+                "values": [{"value": "Онлайн"}]  # Все оплаты онлайн через Радарио
             },
-            # Билетов - id: 986253, тип: Число
+            # Статус оплаты - id: 986105, тип: select ✓
+            {
+                "field_id": 986105,
+                "values": [{"enum_id": self._get_status_enum_id(
+                    self._map_status_for_field(
+                        customer_info['status'],
+                        customer_info['payment_system_status']
+                    )
+                )}]
+            },
+            # Количество билетов - id: 986253, тип: numeric ✓
             {
                 "field_id": 986253,
                 "values": [{"value": customer_info['tickets_count']}]
             }
         ]
 
+        # Добавляем телефон и email если они есть в контакте
+        # Телефон - id: 648997 (если поле существует в сделках)
+        if customer_info.get('phone'):
+            custom_fields.append({
+                "field_id": 648997,  # Проверь, существует ли это поле в сделках!
+                "values": [{"value": customer_info['phone']}]
+            })
+
+        # Почта - id: 648999 (если поле существует в сделках)
+        custom_fields.append({
+            "field_id": 648999,  # Проверь, существует ли это поле в сделках!
+            "values": [{"value": customer_info['email']}]
+        })
+
         # Добавляем дату возврата если есть
         if customer_info.get('refund_date'):
             custom_fields.append({
-                "field_id": 986123,  # Дата и время возврата
+                "field_id": 986123,  # Дата и время возврата ✓
                 "values": [{"value": self._convert_to_timestamp(customer_info['refund_date'])}]
+            })
+        elif customer_info.get('status') == 'Refunded' or customer_info.get('payment_system_status') == 'Refund':
+            # Если статус возврата, но нет даты возврата, используем текущее время
+            custom_fields.append({
+                "field_id": 986123,  # Дата и время возврата
+                "values": [{"value": int(time.time())}]
             })
 
         # Удаляем None значения
@@ -300,16 +325,16 @@ class AmoCRMClient:
             "id": lead_id,
             "status_id": 143,  # Закрыто и не реализовано
             "loss_reason_id": 976851,  # Причина отказа Музей
-            "custom_fields_values": [
+        }
+
+        # Добавляем дату возврата если есть
+        if customer_info.get('refund_date'):
+            update_data["custom_fields_values"] = [
                 {
                     "field_id": 986123,  # Дата возврата
                     "values": [{"value": self._convert_to_timestamp(customer_info.get('refund_date'))}]
-                } if customer_info.get('refund_date') else None
+                }
             ]
-        }
-
-        # Удаляем None значения
-        update_data["custom_fields_values"] = [field for field in update_data["custom_fields_values"] if field is not None]
 
         try:
             data = self._make_request('PATCH', f'leads/{lead_id}', update_data)
@@ -331,7 +356,7 @@ class AmoCRMClient:
             "price": int(customer_info['amount']),  # Обновляем сумму
             "custom_fields_values": [
                 {
-                    "field_id": 986105,  # Статус
+                    "field_id": 986105,  # Статус оплаты
                     "values": [{"enum_id": self._get_status_enum_id(status_value)}]
                 }
             ]
@@ -348,7 +373,7 @@ class AmoCRMClient:
         """Сопоставление статуса для поля 986105"""
         if status == 'Paid' and payment_system_status == 'Paid':
             return 'Оплачен'
-        elif status == 'Refund' or payment_system_status == 'Refund':
+        elif status == 'Refund' or payment_system_status == 'Refund' or status == 'Refunded':
             return 'Возврат'
         elif status == 'Pending':
             return 'В обработке'
@@ -398,7 +423,7 @@ class AmoCRMClient:
 
     def _get_source_enum_id(self, source):
         """Получение enum_id для источника заказа"""
-        # TODO: Получить реальный ID для "Radario"
+        # Теперь не используется, так как поле 986099 оказалось "Вид оплаты"
         return 1  # Заглушка
 
     def _get_status_enum_id(self, status):

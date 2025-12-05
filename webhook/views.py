@@ -63,19 +63,49 @@ def radario_webhook(request):
             logger.info(f"Created new contact: {contact_id}")
 
         # 2. Создаем сделку
-        # Получаем event из model
+        # 2. Работа со сделкой в зависимости от статуса
         model = payload.get('model', {})
         event_data = model.get('Event', {}) or model.get('event', {})
 
-        lead_name = create_lead_name(event_data, customer_info['order_id'])
+        status = customer_info.get('status')
+        payment_status = customer_info.get('payment_system_status')
 
-        lead = amocrm.create_lead(
-            contact_id=contact_id,
-            lead_name=lead_name,
-            amount=customer_info['amount']
-        )
-        lead_id = lead['id']
-        logger.info(f"Created lead: {lead_id}")
+        # Проверяем, есть ли уже сделка с таким номером заказа
+        existing_lead = amocrm.find_lead_by_order_id(customer_info['order_id'])
+
+        if existing_lead:
+            # Если сделка уже существует
+            lead_id = existing_lead['id']
+
+            if status == 'Refunded' or payment_status == 'Refund':
+                # Обработка возврата
+                logger.info(f"Processing refund for existing lead: {lead_id}")
+                amocrm.update_lead_for_refund(lead_id, customer_info)
+            else:
+                # Обновление существующей сделки
+                logger.info(f"Updating existing lead: {lead_id}")
+                amocrm.update_lead(lead_id, customer_info)
+        else:
+            # Создаем новую сделку
+            lead_name = create_lead_name(event_data, customer_info['order_id'])
+
+            if status == 'Refunded' or payment_status == 'Refund':
+                # Для возвратов создаем сделку, но с нулевой суммой
+                logger.info(f"Creating new lead for refund: {customer_info['order_id']}")
+                # Можно создать сделку с нулевой суммой или другим статусом
+                lead = amocrm.create_lead_with_custom_fields(
+                    contact_id=contact_id,
+                    customer_info=customer_info
+                )
+            else:
+                # Для обычных заказов
+                logger.info(f"Creating new lead: {customer_info['order_id']}")
+                lead = amocrm.create_lead_with_custom_fields(
+                    contact_id=contact_id,
+                    customer_info=customer_info
+                )
+
+            lead_id = lead['id']
 
         # Обновляем лог
         webhook_log.status = 'success'

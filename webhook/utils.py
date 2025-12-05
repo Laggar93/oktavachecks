@@ -57,8 +57,22 @@ def extract_customer_info(webhook_data):
             name = model['user']['name']
 
         # Данные о возврате
+        # Данные о возврате
         refund_details = model.get('RefundDetails', {}) or model.get('refundDetails', {})
         refund_date = refund_details.get('RefundDate') if refund_details else None
+
+        # Получаем статусы
+        status = model.get('Status') or model.get('status')
+        payment_system_status = model.get('PaymentSystemStatus') or model.get('paymentSystemStatus')
+
+        # Для возвратов: если статус Refunded, но нет refund_date,
+        # используем updateDate или текущее время
+        if (status == 'Refunded' or payment_system_status == 'Refund') and not refund_date:
+            refund_date = model.get('UpdateDate') or model.get('updateDate')
+            if not refund_date:
+                # Если нет даты возврата, используем текущее время
+                from datetime import datetime
+                refund_date = datetime.now().isoformat() + 'Z'
 
         return {
             'email': email,
@@ -77,7 +91,7 @@ def extract_customer_info(webhook_data):
             'event_date': model.get('Event', {}).get('BeginDate', '') or model.get('event', {}).get('beginDate', ''),
             'tickets_count': len(tickets),
             'tickets': tickets,
-            'refund_date': refund_date,
+            'refund_date': refund_date,  # ← Должно быть заполнено
             'refund_details': refund_details,
             'payment_type': model.get('PaymentType') or model.get('paymentType', ''),
             'promocode': model.get('Promocode') or model.get('promocode', ''),
@@ -115,7 +129,8 @@ def should_process_order(webhook_data):
     status = webhook_data.get('Status')
     payment_status = webhook_data.get('PaymentSystemStatus')
 
-    # Обрабатываем только оплаченные заказы
-    return (status == 'Paid' and payment_status == 'Paid')
+    # Обрабатываем ВСЕ заказы (Paid, Refunded, Cancelled и т.д.)
+    # чтобы заполнять информацию в amoCRM
+    return True  # Всегда обрабатываем
 
 
