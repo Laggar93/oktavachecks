@@ -163,12 +163,11 @@ class AmoCRMClient:
             raise
 
     def find_lead_by_order_id(self, order_id):
-        """Поиск сделки по номеру заказа - РАБОЧАЯ ВЕРСИЯ"""
+        """Поиск сделки по номеру заказа - ПРОСТАЯ РАБОЧАЯ ВЕРСИЯ"""
         try:
             logger.info(f"🔍 Поиск сделки по order_id: {order_id}")
 
-            # Сначала ищем по полному тексту (наиболее точный)
-            logger.info(f"Поиск по полному тексту: '{order_id}'")
+            # 1. Сначала ищем по полному order_id
             endpoint = f"leads?query={order_id}&with=custom_fields"
             data = self._make_request('GET', endpoint)
 
@@ -177,48 +176,44 @@ class AmoCRMClient:
                 return None
 
             leads = data['_embedded']['leads']
-            logger.info(f"Найдено сделок по запросу '{order_id}': {len(leads)}")
+            logger.info(f"Найдено сделок: {len(leads)}")
 
-            # Покажем для отладки
+            # 2. Ищем точное совпадение в поле 986103
             for lead in leads:
-                logger.info(f"  Сделка {lead['id']}: {lead.get('name', 'N/A')}")
+                if 'custom_fields_values' not in lead:
+                    continue
 
-            # Ищем точное совпадение в поле 986103
-            for lead in leads:
-                if 'custom_fields_values' in lead:
-                    for field in lead['custom_fields_values']:
-                        if field.get('field_id') == 986103:  # Номер заказа
-                            field_value = field.get('values', [{}])[0].get('value')
-                            field_str = str(field_value)
+                for field in lead['custom_fields_values']:
+                    if field.get('field_id') == 986103:  # Номер заказа
+                        field_value = field.get('values', [{}])[0].get('value')
 
-                            # Извлекаем цифры из обоих значений
-                            import re
-                            order_digits = re.findall(r'\d+', str(order_id))
-                            field_digits = re.findall(r'\d+', field_str)
+                        # Простое сравнение строк
+                        if str(field_value) == str(order_id):
+                            logger.info(f"✅ Точное совпадение: сделка {lead['id']}")
+                            return lead
 
-                            logger.info(f"  Сравниваю: order_id='{order_id}' (цифры: {order_digits}) с полем='{field_str}' (цифры: {field_digits})")
-
-                            # 1. Точное совпадение строк
-                            if field_str == str(order_id):
-                                logger.info(f"✅ Точное строковое совпадение: сделка {lead['id']}")
+                        # Если в поле число, а order_id строка с цифрами
+                        import re
+                        # Извлекаем цифры из order_id
+                        order_digits = re.findall(r'\d+', str(order_id))
+                        if order_digits:
+                            # Сравниваем с числовым значением в поле
+                            if str(field_value) == order_digits[0]:
+                                logger.info(f"✅ Совпадение цифр: сделка {lead['id']}")
                                 return lead
 
-                            # 2. Совпадение первых групп цифр
-                            if order_digits and field_digits and order_digits[0] == field_digits[0]:
-                                logger.info(f"✅ Совпадение цифр ({order_digits[0]}): сделка {lead['id']}")
-                                return lead
+            # 3. Если не нашли точного совпадения
+            logger.warning(f"⚠️ Нет точного совпадения для '{order_id}'")
 
-            logger.warning(f"⚠️ Не найдено точного совпадения для order_id '{order_id}'")
-
-            # Если не нашли, но есть результаты - возвращаем первую
+            # Но если есть найденные сделки - возвращаем первую
             if leads:
-                logger.warning(f"   Возвращаю первую сделку: {leads[0]['id']}")
+                logger.info(f"   Возвращаю первую сделку: {leads[0]['id']}")
                 return leads[0]
 
             return None
 
         except Exception as e:
-            logger.error(f"❌ Ошибка поиска сделки для order_id {order_id}: {e}")
+            logger.error(f"❌ Ошибка поиска сделки: {e}")
             return None
 
     def _map_event_type(self, event_title):
@@ -337,22 +332,25 @@ class AmoCRMClient:
         # А) Обязательные поля - ИСПРАВЛЕННЫЙ КОД
         # В методе create_lead_with_custom_fields исправьте:
         if customer_info.get('order_id'):
-            import re
             order_id_str = str(customer_info['order_id'])
 
-            # Извлекаем ВСЕ цифры (не только первые)
-            all_numbers = re.findall(r'\d+', order_id_str)
-            if all_numbers:
-                # Сохраняем ВСЕ цифры как строку
-                order_id_value = ''.join(all_numbers)
-            else:
-                order_id_value = "0"
-
-            logger.info(f"Order ID '{order_id_str}' → для поля 986103: '{order_id_value}'")
+            # Пробуем преобразовать в число (для поля 986103)
+            try:
+                # Извлекаем цифры из строки
+                import re
+                numbers = re.findall(r'\d+', order_id_str)
+                if numbers:
+                    # Берем первые цифры как число
+                    order_id_value = int(numbers[0])
+                else:
+                    # Если нет цифр, используем 0
+                    order_id_value = 0
+            except Exception:
+                order_id_value = 0
 
             custom_fields.append({
                 "field_id": 986103,
-                "values": [{"value": order_id_value}]  # Сохраняем как строку!
+                "values": [{"value": order_id_value}]  # Сохраняем как число
             })
 
         if customer_info.get('tickets_count', 0) > 0:
