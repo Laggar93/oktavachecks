@@ -78,13 +78,20 @@ def radario_webhook(request):
             lead_id = existing_lead['id']
 
             if status == 'Refunded' or payment_status == 'Refund':
-                # Обработка возврата
+                # Обработка возврата - закрываем сделку
                 logger.info(f"Processing refund for existing lead: {lead_id}")
                 amocrm.update_lead_for_refund(lead_id, customer_info)
             else:
-                # Обновление существующей сделки
+                # Обновление существующей сделки (для смены статуса Paid и т.д.)
                 logger.info(f"Updating existing lead: {lead_id}")
-                amocrm.update_lead(lead_id, customer_info)
+
+                # Для статусов Paid нужно также обновить статус сделки
+                if status == 'Paid' and payment_status == 'Paid':
+                    # Меняем статус сделки на "Новая заявка" (77419554)
+                    amocrm.update_lead(lead_id, customer_info, status_id=77419554)
+                else:
+                    # Простое обновление суммы и статуса оплаты
+                    amocrm.update_lead(lead_id, customer_info)
         else:
             # Создаем новую сделку
             lead_name = create_lead_name(event_data, customer_info['order_id'])

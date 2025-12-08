@@ -32,3 +32,59 @@ AmoCRM API error: 400 Client Error: Bad Request for url: https://infooktavaklast
 Error creating lead with custom fields: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads
 Создаю сделку 'Radario #1765168540: Мастер-класс' с 10 полями
 ✅ Сделка создана: 33820583
+Received Radario webhook: {"model": {"Id": 1765169600, "Email": "refund.test.1765169600@example.com", "Status": "Paid", "PaymentSystemStatus": "Paid", "Amount": 2500.0, "Event": {"Title": "\u0422\u0435\u0441\u0442 \u0434\u043b\u044f \u0432\u043e\u0437\u0432\u0440\u0430\u0442\u0430"}, "User": {"Name": "\u0422\u0435\u0441\u0442 \u0412\u043e\u0437\u0432\u0440\u0430\u0442\u0430"}, "Tickets": [{"OwnerName": "\u0422\u0435\u0441\u0442 \u0412\u043e\u0437\u0432\u0440\u0430\u0442\u0430"}], "CreationDate": "2024-01-15T14:00:00Z", "...
+Created new contact: 48390453
+AmoCRM API error: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads?filter%5Bcustom_fields_values%5D%5B0%5D%5Bfield_id%5D=986103&filter%5Bcustom_fields_values%5D%5B0%5D%5Bvalues%5D%5B0%5D%5Bvalue%5D=1765169600
+Error finding lead by order_id 1765169600: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads?filter%5Bcustom_fields_values%5D%5B0%5D%5Bfield_id%5D=986103&filter%5Bcustom_fields_values%5D%5B0%5D%5Bvalues%5D%5B0%5D%5Bvalue%5D=1765169600
+Creating new lead: 1765169600
+Создаю сделку 'Radario #1765169600: Другое' с 8 полями
+✅ Сделка создана: 33820733
+Received Radario webhook: {"model": {"Id": 1765169600, "Email": "refund.test.1765169600@example.com", "Status": "Refunded", "PaymentSystemStatus": "Refund", "Amount": 2500.0, "Event": {"Title": "\u0422\u0435\u0441\u0442 \u0434\u043b\u044f \u0432\u043e\u0437\u0432\u0440\u0430\u0442\u0430"}, "User": {"Name": "\u0422\u0435\u0441\u0442 \u0412\u043e\u0437\u0432\u0440\u0430\u0442\u0430"}, "Tickets": [{"OwnerName": "\u0422\u0435\u0441\u0442 \u0412\u043e\u0437\u0432\u0440\u0430\u0442\u0430"}], "CreationDate": "2024-01-15T14:00:0...
+Found existing contact: 48390453
+AmoCRM API error: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads?filter%5Bcustom_fields_values%5D%5B0%5D%5Bfield_id%5D=986103&filter%5Bcustom_fields_values%5D%5B0%5D%5Bvalues%5D%5B0%5D%5Bvalue%5D=1765169600
+Error finding lead by order_id 1765169600: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads?filter%5Bcustom_fields_values%5D%5B0%5D%5Bfield_id%5D=986103&filter%5Bcustom_fields_values%5D%5B0%5D%5Bvalues%5D%5B0%5D%5Bvalue%5D=1765169600
+Creating new lead for refund: 1765169600
+Создаю сделку 'Radario #1765169600: Другое' с 9 полями
+✅ Сделка создана: 33820735
+AmoCRM API error: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads?filter%5Bcustom_fields_values%5D%5B%5D%5Bfield_id%5D=986103&filter%5Bcustom_fields_values%5D%5B%5D%5Bvalues%5D%5B%5D%5Bvalue%5D=1765168540
+Error finding lead by order_id 1765168540: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads?filter%5Bcustom_fields_values%5D%5B%5D%5Bfield_id%5D=986103&filter%5Bcustom_fields_values%5D%5B%5D%5Bvalues%5D%5B%5D%5Bvalue%5D=1765168540
+AmoCRM API error: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads?filter%5Bcustom_fields_values%5D%5B%5D%5Bfield_id%5D=986103&filter%5Bcustom_fields_values%5D%5B%5D%5Bvalues%5D%5B%5D%5Bvalue%5D=1765167433
+Error finding lead by order_id 1765167433: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads?filter%5Bcustom_fields_values%5D%5B%5D%5Bfield_id%5D=986103&filter%5Bcustom_fields_values%5D%5B%5D%5Bvalues%5D%5B%5D%5Bvalue%5D=1765167433
+AmoCRM API error: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads?filter%5Bcustom_fields_values%5D%5B%5D%5Bfield_id%5D=986103&filter%5Bcustom_fields_values%5D%5B%5D%5Bvalues%5D%5B%5D%5Bvalue%5D=1765168540
+Error finding lead by order_id 1765168540: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads?filter%5Bcustom_fields_values%5D%5B%5D%5Bfield_id%5D=986103&filter%5Bcustom_fields_values%5D%5B%5D%5Bvalues%5D%5B%5D%5Bvalue%5D=1765168540
+🔍 Ищу сделку по order_id: 1765168540
+✅ Найдено 1 сделок по запросу '1765168540'
+✅ Точное совпадение: сделка 33820583 имеет order_id 1765168540
+🔍 Ищу сделку по order_id: 1765167433
+Пустой ответ для order_id: 1765167433
+🔍 Ищу сделку по order_id: 999888777
+✅ Найдено 3 сделок по запросу '999888777'
+✅ Точное совпадение: сделка 33820669 имеет order_id 999888777
+Received Radario webhook: {"model": {"Id": 1765170210, "Email": "final.refund.1765170210@example.com", "Status": "Paid", "PaymentSystemStatus": "Paid", "Amount": 3000.0, "Event": {"Title": "\u0424\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u0442\u0435\u0441\u0442 \u043c\u0430\u0441\u0442\u0435\u0440-\u043a\u043b\u0430\u0441\u0441"}, "User": {"Name": "\u0424\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u0422\u0435\u0441\u0442"}, "Tickets": [{"OwnerName": "\u0424\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u...
+Created new contact: 48390521
+🔍 Поиск сделки по order_id: 1765170210
+Пустой ответ для order_id: 1765170210
+Creating new lead: 1765170210
+Создаю сделку 'Radario #1765170210: Мастер-класс' с 9 полями
+✅ Сделка создана: 33820811
+Received Radario webhook: {"model": {"Id": 1765170210, "Email": "final.refund.1765170210@example.com", "Status": "Refunded", "PaymentSystemStatus": "Refund", "Amount": 3000.0, "Event": {"Title": "\u0424\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u0442\u0435\u0441\u0442 \u043c\u0430\u0441\u0442\u0435\u0440-\u043a\u043b\u0430\u0441\u0441"}, "User": {"Name": "\u0424\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u0422\u0435\u0441\u0442"}, "Tickets": [{"OwnerName": "\u0424\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0...
+Found existing contact: 48390521
+🔍 Поиск сделки по order_id: 1765170210
+✅ Найдено 1 сделок по запросу '1765170210'
+✅ Точное совпадение: сделка 33820811 имеет order_id 1765170210
+Processing refund for existing lead: 33820811
+Обновляю сделку 33820811 для возврата
+Данные обновления: {"id": 33820811, "status_id": 143, "loss_reason_id": 976851, "custom_fields_values": [{"field_id": 986105, "values": [{"enum_id": 985099}]}, {"field_id": 986123, "values": [{"value": 1705330800}]}]}
+AmoCRM API error: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads/33820811
+Error updating lead for refund 33820811: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads/33820811
+Webhook processing error: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads/33820811
+Traceback (most recent call last):
+  File "/Users/ulik/PycharmProjects/oktavachecks/webhook/views.py", line 83, in radario_webhook
+    amocrm.update_lead_for_refund(lead_id, customer_info)
+  File "/Users/ulik/PycharmProjects/oktavachecks/webhook/amocrm_client.py", line 483, in update_lead_for_refund
+    data = self._make_request('PATCH', f'leads/{lead_id}', update_data)
+  File "/Users/ulik/PycharmProjects/oktavachecks/webhook/amocrm_client.py", line 36, in _make_request
+    response.raise_for_status()
+  File "/Users/ulik/PycharmProjects/oktavachecks/venv/lib/python3.10/site-packages/requests/models.py", line 1026, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads/33820811

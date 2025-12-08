@@ -163,14 +163,52 @@ class AmoCRMClient:
             raise
 
     def find_lead_by_order_id(self, order_id):
-        """Поиск сделки по номеру заказа"""
+        """Поиск сделки по номеру заказа - ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ"""
         try:
-            # Поиск сделки по кастомному полю "Номер заказа" (986103)
-            endpoint = f"leads?filter[custom_fields_values][0][field_id]=986103&filter[custom_fields_values][0][values][0][value]={order_id}"
+            logger.info(f"🔍 Поиск сделки по order_id: {order_id}")
+
+            # Используем query параметр (это работает!)
+            endpoint = f"leads?query={order_id}&with=custom_fields"
+
             data = self._make_request('GET', endpoint)
-            return data['_embedded']['leads'][0] if data.get('_embedded', {}).get('leads') else None
+
+            if not data:
+                logger.warning(f"Пустой ответ для order_id: {order_id}")
+                return None
+
+            # Проверяем структуру ответа
+            if '_embedded' in data and 'leads' in data['_embedded']:
+                leads = data['_embedded']['leads']
+
+                if not leads:
+                    logger.info(f"ℹ️ Сделок не найдено для order_id: {order_id}")
+                    return None
+
+                logger.info(f"✅ Найдено {len(leads)} сделок по запросу '{order_id}'")
+
+                # Ищем сделку с ТОЧНЫМ совпадением order_id в поле 986103
+                for lead in leads:
+                    if 'custom_fields_values' in lead:
+                        for field in lead['custom_fields_values']:
+                            if field.get('field_id') == 986103:  # Номер заказа
+                                field_value = field.get('values', [{}])[0].get('value')
+
+                                # ТОЧНОЕ сравнение (как строки)
+                                if str(field_value) == str(order_id):
+                                    logger.info(f"✅ Точное совпадение: сделка {lead['id']} имеет order_id {order_id}")
+                                    return lead
+
+                # Если не нашли точное совпадение, но есть результаты
+                logger.warning(f"⚠️ Нет точного совпадения для order_id {order_id}")
+                logger.warning(f"   Возвращаю первую найденную сделку: {leads[0]['id']}")
+                return leads[0]  # Возвращаем первую на всякий случай
+
+            else:
+                logger.warning(f"Неожиданная структура ответа для order_id: {order_id}")
+                return None
+
         except Exception as e:
-            logger.error(f"Error finding lead by order_id {order_id}: {e}")
+            logger.error(f"❌ Ошибка поиска сделки для order_id {order_id}: {e}")
             return None
 
     def _map_event_type(self, event_title):
@@ -406,21 +444,39 @@ class AmoCRMClient:
             raise
 
     def update_lead_for_refund(self, lead_id, customer_info):
-        """Обновление сделки при возврате"""
+        """Обновление сделки при возврате - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+
+        # Получаем статус для поля "Статус оплаты"
+        payment_status = self._map_status_for_field(
+            customer_info.get('status', ''),
+            customer_info.get('payment_system_status', '')
+        )
+        status_enum_id = self._get_status_enum_id(payment_status)
+
+        # Убрали loss_reason_id
         update_data = {
             "id": lead_id,
             "status_id": 143,  # Закрыто и не реализовано
-            "loss_reason_id": 976851,  # Причина отказа Музей
         }
+
+        # Добавляем обновление статуса оплаты
+        if status_enum_id:
+            update_data["custom_fields_values"] = [{
+                "field_id": 986105,  # Статус оплаты
+                "values": [{"enum_id": status_enum_id}]  # 985099 для Возврат
+            }]
 
         # Добавляем дату возврата если есть
         if customer_info.get('refund_date'):
-            update_data["custom_fields_values"] = [
-                {
-                    "field_id": 986123,  # Дата возврата
-                    "values": [{"value": self._convert_to_timestamp(customer_info.get('refund_date'))}]
-                }
-            ]
+            if "custom_fields_values" not in update_data:
+                update_data["custom_fields_values"] = []
+
+            update_data["custom_fields_values"].append({
+                "field_id": 986123,  # Дата возврата
+                "values": [{"value": self._convert_to_timestamp(customer_info.get('refund_date'))}]
+            })
+
+        logger.info(f"Обновляю сделку {lead_id} для возврата")
 
         try:
             data = self._make_request('PATCH', f'leads/{lead_id}', update_data)
@@ -429,24 +485,32 @@ class AmoCRMClient:
             logger.error(f"Error updating lead for refund {lead_id}: {e}")
             raise
 
-    def update_lead(self, lead_id, customer_info):
+    def update_lead(self, lead_id, customer_info, status_id=None):
         """Обновление сделки при изменении статуса/суммы"""
         # Определяем статус для поля
         status_value = self._map_status_for_field(
             customer_info['status'],
             customer_info['payment_system_status']
         )
+        status_enum_id = self._get_status_enum_id(status_value)
 
         update_data = {
             "id": lead_id,
             "price": int(customer_info['amount']),  # Обновляем сумму
-            "custom_fields_values": [
-                {
-                    "field_id": 986105,  # Статус оплаты
-                    "values": [{"enum_id": self._get_status_enum_id(status_value)}]
-                }
-            ]
         }
+
+        # Если передан новый статус сделки - добавляем его
+        if status_id:
+            update_data["status_id"] = status_id
+
+        # Добавляем обновление статуса оплаты
+        if status_enum_id:
+            update_data["custom_fields_values"] = [{
+                "field_id": 986105,  # Статус оплаты
+                "values": [{"enum_id": status_enum_id}]
+            }]
+
+        logger.info(f"Обновляю сделку {lead_id}")
 
         try:
             data = self._make_request('PATCH', f'leads/{lead_id}', update_data)
