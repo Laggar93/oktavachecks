@@ -1,0 +1,34 @@
+Token check status: 200
+✅ Токен рабочий
+Creating lead with data: {
+  "name": "[Radario] оплата [Мастер-класс]",
+  "price": 3500,
+  "pipeline_id": 9713218,
+  "status_id": 77419554,
+  "custom_fields_values": [
+    {
+      "field_id": 986103,
+      "values": [
+        {
+          "value": 123456789
+        }
+      ]
+    },
+    {
+      "field_id": 986255,
+      "values": [
+        {
+          "enum_id": 985177
+        }
+      ]
+    },
+    {
+      "field_id": 986251,
+      "values": [
+        {
+          "value": "Мастер-класс по живописи для начинающих"
+        }
+AmoCRM API error: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads
+Error creating lead with custom fields: 400 Client Error: Bad Request for url: https://infooktavaklasterru.amocrm.ru/api/v4/leads
+Создаю сделку 'Radario #1765168540: Мастер-класс' с 10 полями
+✅ Сделка создана: 33820583
