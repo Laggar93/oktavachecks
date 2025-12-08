@@ -163,12 +163,25 @@ class AmoCRMClient:
             raise
 
     def find_lead_by_order_id(self, order_id):
-        """Поиск сделки по номеру заказа - ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ"""
+        """Поиск сделки по номеру заказа - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         try:
             logger.info(f"🔍 Поиск сделки по order_id: {order_id}")
 
-            # Используем query параметр (это работает!)
-            endpoint = f"leads?query={order_id}&with=custom_fields"
+            # Преобразуем order_id в число для поиска
+            try:
+                # Извлекаем цифры из order_id
+                import re
+                numbers = re.findall(r'\d+', str(order_id))
+                search_number = int(numbers[0]) if numbers else None
+            except:
+                search_number = None
+
+            if search_number:
+                # Ищем по числовому значению
+                endpoint = f"leads?query={search_number}&with=custom_fields"
+            else:
+                # Ищем по тексту
+                endpoint = f"leads?query={order_id}&with=custom_fields"
 
             data = self._make_request('GET', endpoint)
 
@@ -184,24 +197,28 @@ class AmoCRMClient:
                     logger.info(f"ℹ️ Сделок не найдено для order_id: {order_id}")
                     return None
 
-                logger.info(f"✅ Найдено {len(leads)} сделок по запросу '{order_id}'")
+                logger.info(f"✅ Найдено {len(leads)} сделок по запросу")
 
-                # Ищем сделку с ТОЧНЫМ совпадением order_id в поле 986103
+                # Ищем сделку с совпадением order_id в поле 986103
                 for lead in leads:
                     if 'custom_fields_values' in lead:
                         for field in lead['custom_fields_values']:
                             if field.get('field_id') == 986103:  # Номер заказа
                                 field_value = field.get('values', [{}])[0].get('value')
 
-                                # ТОЧНОЕ сравнение (как строки)
+                                # Сравниваем как строки и как числа
                                 if str(field_value) == str(order_id):
-                                    logger.info(f"✅ Точное совпадение: сделка {lead['id']} имеет order_id {order_id}")
+                                    logger.info(f"✅ Текстовое совпадение: сделка {lead['id']}")
                                     return lead
 
-                # Если не нашли точное совпадение, но есть результаты
+                                # Также проверяем числовое совпадение
+                                if search_number and field_value == search_number:
+                                    logger.info(f"✅ Числовое совпадение: сделка {lead['id']}")
+                                    return lead
+
+                # Если не нашли точное совпадение
                 logger.warning(f"⚠️ Нет точного совпадения для order_id {order_id}")
-                logger.warning(f"   Возвращаю первую найденную сделку: {leads[0]['id']}")
-                return leads[0]  # Возвращаем первую на всякий случай
+                return None
 
             else:
                 logger.warning(f"Неожиданная структура ответа для order_id: {order_id}")
@@ -324,11 +341,26 @@ class AmoCRMClient:
         # 6. Собираем поля
         custom_fields = []
 
-        # А) Обязательные поля
+        # А) Обязательные поля - ИСПРАВЛЕННЫЙ КОД
         if customer_info.get('order_id'):
+            try:
+                # Преобразуем order_id в число для поля 986103
+                order_id_str = str(customer_info['order_id'])
+                # Извлекаем все цифры
+                import re
+                numbers = re.findall(r'\d+', order_id_str)
+                if numbers:
+                    order_id_value = int(numbers[0])
+                else:
+                    # Если нет цифр, используем хэш
+                    order_id_value = abs(hash(order_id_str)) % 1000000
+            except Exception as e:
+                logger.warning(f"Не удалось преобразовать order_id в число: {e}")
+                order_id_value = 0
+
             custom_fields.append({
                 "field_id": 986103,
-                "values": [{"value": customer_info['order_id']}]
+                "values": [{"value": order_id_value}]  # ТЕПЕРЬ ЧИСЛО!
             })
 
         if customer_info.get('tickets_count', 0) > 0:
