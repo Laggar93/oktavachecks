@@ -4,9 +4,9 @@ import json
 import time
 from datetime import datetime
 from django.conf import settings
-
+from .utils import format_name_for_amocrm
 logger = logging.getLogger(__name__)
-
+from .utils import create_lead_name
 
 # Добавьте в amocrm_client.p
 
@@ -137,10 +137,14 @@ class AmoCRMClient:
             logger.error(f"Error finding contact by phone {phone}: {e}")
             return None
 
+
     def create_contact(self, email, name, phone=None):
         """Создание нового контакта"""
+        # Форматируем имя для amoCRM
+        formatted_name = format_name_for_amocrm(name)
+
         contact_data = {
-            "name": name,  # Имя контакта передается правильно
+            "name": formatted_name,  # Используем отформатированное имя
             "custom_fields_values": [
                 {
                     "field_code": "EMAIL",
@@ -161,6 +165,7 @@ class AmoCRMClient:
         except Exception as e:
             logger.error(f"Error creating contact: {e}")
             raise
+
 
     def find_lead_by_order_id(self, order_id):
         """Поиск сделки - ПРОСТАЯ РАБОЧАЯ ВЕРСИЯ"""
@@ -192,7 +197,7 @@ class AmoCRMClient:
             return None
 
     def _map_event_type(self, event_title):
-        """Сопоставление типа события по ТЗ"""
+        """Сопоставление типа события по ТЗ - ОБНОВЛЕННАЯ ВЕРСИЯ"""
         event_title_lower = event_title.lower()
 
         mapping = {
@@ -227,7 +232,15 @@ class AmoCRMClient:
             'паблик-ток': 'Паблик-топ',
             'ted-talk': 'TED-talk',
             'показ': 'Показ',
-            'диалог': 'Диалог'
+            'диалог': 'Диалог',
+            'книжный клуб': 'Книжный клуб',
+            'book club': 'Книжный клуб',
+            'bookclub': 'Книжный клуб',
+            'литературный клуб': 'Книжный клуб',
+            'литературная встреча': 'Книжный клуб',
+            'чтение': 'Книжный клуб',
+            'литературный вечер': 'Книжный клуб',
+            'обсуждение книги': 'Книжный клуб'
         }
 
         for key, value in mapping.items():
@@ -282,9 +295,13 @@ class AmoCRMClient:
         status_enum_id = self._get_status_enum_id(payment_status)
 
         # 2. Название сделки (макс 255 символов)
-        lead_name = f"Radario: {event_type}"
-        if customer_info.get('order_id'):
-            lead_name = f"Radario #{customer_info['order_id']}: {event_type}"
+
+
+        # ... в методе create_lead_with_custom_fields:
+        lead_name = create_lead_name(
+            {"Title": customer_info.get('event_title', '')},
+            customer_info.get('order_id')
+        )
         lead_name = lead_name[:255]
 
         # 3. Сумма
@@ -573,6 +590,7 @@ class AmoCRMClient:
             'TED-talk': 985231,
             'Показ': 985233,
             'Диалог': 985235,
+            'Книжный клуб': 986271,
             'Другое': None  # Нужно добавить вариант "Другое" в AmoCRM или использовать ближайший
         }
 

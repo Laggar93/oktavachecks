@@ -2,14 +2,6 @@ import json
 import logging
 from datetime import timezone
 
-from django.conf import settings
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_http_methods
-
-from webhook.amocrm_client import AmoCRMClient
-from webhook.models import WebhookLog
-
 logger = logging.getLogger(__name__)
 
 
@@ -43,20 +35,59 @@ def extract_customer_info(webhook_data):
         email = model.get('Email', '') or model.get('email', '')
         phone = model.get('User', {}).get('Phone', '') or model.get('user', {}).get('phone', '')
 
-        # Имя из билетов или пользователя
-        name = "Покупатель билета"
+        # Получаем ФИО из разных источников
+        name = "Клиент Radario"  # значение по умолчанию
+
+        # 1. Попробуем из билетов
         tickets = model.get('Tickets', []) or model.get('tickets', [])
+        if tickets:
+            # Первый билет может содержать полное имя
+            first_ticket = tickets[0]
+            if first_ticket.get('OwnerName'):
+                name = first_ticket['OwnerName']
+            elif first_ticket.get('participantName'):
+                name = first_ticket['participantName']
+            elif first_ticket.get('firstName') and first_ticket.get('lastName'):
+                name = f"{first_ticket['lastName']} {first_ticket['firstName']}"
+            elif first_ticket.get('first_name') and first_ticket.get('last_name'):
+                name = f"{first_ticket['last_name']} {first_ticket['first_name']}"
 
-        if tickets and tickets[0].get('OwnerName'):
-            name = tickets[0]['OwnerName']
-        elif tickets and tickets[0].get('participantName'):
-            name = tickets[0]['participantName']
-        elif model.get('User') and model['User'].get('Name'):
-            name = model['User']['Name']
-        elif model.get('user') and model['user'].get('name'):
-            name = model['user']['name']
+        # 2. Попробуем из пользователя
+        if name == "Клиент Radario":
+            user = model.get('User', {}) or model.get('user', {})
+            if user.get('Name'):
+                name = user['Name']
+            elif user.get('FirstName') and user.get('LastName'):
+                name = f"{user['LastName']} {user['FirstName']}"
+            elif user.get('firstName') and user.get('lastName'):
+                name = f"{user['lastName']} {user['firstName']}"
+            elif user.get('first_name') and user.get('last_name'):
+                name = f"{user['last_name']} {user['first_name']}"
 
-        # Данные о возврате
+        # 3. Если есть в custom_data
+        if name == "Клиент Radario":
+            custom_data = model.get('CustomData') or model.get('customData', '')
+            if custom_data and isinstance(custom_data, str):
+                # Парсим custom_data в поисках имени
+                try:
+                    import json
+                    custom_json = json.loads(custom_data)
+                    if custom_json.get('name'):
+                        name = custom_json['name']
+                    elif custom_json.get('fio'):
+                        name = custom_json['fio']
+                    elif custom_json.get('full_name'):
+                        name = custom_json['full_name']
+                except:
+                    pass
+
+        # 4. Если все еще нет имени, используем email
+        if name == "Клиент Radario" and email:
+            # Берем часть до @
+            name = email.split('@')[0]
+            # Делаем первую букву заглавной
+            name = name.capitalize()
+
         # Данные о возврате
         refund_details = model.get('RefundDetails', {}) or model.get('refundDetails', {})
         refund_date = refund_details.get('RefundDate') if refund_details else None
@@ -76,7 +107,7 @@ def extract_customer_info(webhook_data):
 
         return {
             'email': email,
-            'name': name,
+            'name': name,  # Теперь с правильным ФИО
             'phone': phone,
             'order_id': model.get('Id') or model.get('id'),
             'status': model.get('Status') or model.get('status'),
@@ -103,34 +134,65 @@ def extract_customer_info(webhook_data):
         }
     except Exception as e:
         logger.error(f"Error extracting customer info: {e}")
+        # Возвращаем минимальные данные в случае ошибки
+        model = webhook_data.get('model', {})
         return {
             'email': model.get('Email', '') or model.get('email', ''),
-            'name': 'Покупатель билета',
+            'name': 'Клиент Radario',
             'phone': '',
             'order_id': model.get('Id') or model.get('id'),
             'status': model.get('Status') or model.get('status'),
-            'amount': float(model.get('Amount', 0) or model.get('amount', 0))
+            'payment_system_status': model.get('PaymentSystemStatus') or model.get('paymentSystemStatus'),
+            'amount': float(model.get('Amount', 0) or model.get('amount', 0)),
+            'event_title': model.get('Event', {}).get('Title', '') or model.get('event', {}).get('title', ''),
+            'tickets_count': 0
         }
 
 
 def create_lead_name(event_data, order_id):
-    """Создание названия для сделки в amoCRM"""
+    """Создание названия для сделки в amoCRM - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
     event_title = event_data.get('Title') or event_data.get('title', 'Мероприятие')
-    event_date = (event_data.get('BeginDate') or event_data.get('beginDate', '')).split('T')[0]
 
-    if event_date:
-        return f"Билет на {event_title} ({event_date}) - Заказ #{order_id}"
+    # Обрезаем длинное название
+    if len(event_title) > 100:
+        event_title_short = event_title[:97] + "..."
     else:
-        return f"Билет на {event_title} - Заказ #{order_id}"
+        event_title_short = event_title
+
+    if order_id:
+        return f"Билет на {event_title_short} (#{order_id})"
+    else:
+        return f"Билет на {event_title_short}"
 
 
 def should_process_order(webhook_data):
     """Проверяем, нужно ли обрабатывать заказ"""
-    status = webhook_data.get('Status')
-    payment_status = webhook_data.get('PaymentSystemStatus')
-
     # Обрабатываем ВСЕ заказы (Paid, Refunded, Cancelled и т.д.)
     # чтобы заполнять информацию в amoCRM
-    return True  # Всегда обрабатываем
+    return True
 
 
+def format_name_for_amocrm(full_name):
+    """Форматирование ФИО для amoCRM (можно использовать в amocrm_client)"""
+    if not full_name or full_name == "Покупатель билета" or full_name == "Клиент Radario":
+        return "Клиент Radario"
+
+    # Убираем лишние пробелы
+    parts = [p.strip() for p in str(full_name).split() if p.strip()]
+
+    if len(parts) == 0:
+        return "Клиент Radario"
+    elif len(parts) == 1:
+        # Только имя
+        return parts[0]
+    elif len(parts) == 2:
+        # Имя Фамилия → Фамилия Имя
+        return f"{parts[1]} {parts[0]}"
+    elif len(parts) >= 3:
+        # Фамилия Имя Отчество → Фамилия И.О.
+        last_name = parts[0]
+        first_initial = parts[1][0] + "." if parts[1] else ""
+        middle_initial = parts[2][0] + "." if len(parts) > 2 and parts[2] else ""
+        return f"{last_name} {first_initial}{middle_initial}".strip()
+
+    return full_name
