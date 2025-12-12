@@ -6,18 +6,14 @@ logger = logging.getLogger(__name__)
 
 
 def verify_radario_webhook(payload):
-    """Проверка вебхука от Радарио (без секретного ключа)"""
-    # Проверяем наличие поля 'model'
     if 'model' not in payload:
         logger.error(f"No 'model' field in payload: {payload.keys()}")
         return False
 
     model = payload['model']
 
-    # Проверяем обязательные поля внутри model
     required_fields = ['Id', 'Email', 'Status', 'Event']
 
-    # Проверяем наличие полей (учитываем разный регистр)
     for field in required_fields:
         if field not in model and field.lower() not in model:
             logger.error(f"Missing required field '{field}' in model. Available fields: {list(model.keys())}")
@@ -27,21 +23,16 @@ def verify_radario_webhook(payload):
 
 
 def extract_customer_info(webhook_data):
-    """Извлечение информации о покупателе из вебхука Радарио"""
     try:
-        # Данные находятся внутри 'model'
         model = webhook_data.get('model', {})
 
         email = model.get('Email', '') or model.get('email', '')
         phone = model.get('User', {}).get('Phone', '') or model.get('user', {}).get('phone', '')
 
-        # Получаем ФИО из разных источников
-        name = "Клиент Radario"  # значение по умолчанию
+        name = "Клиент Radario"
 
-        # 1. Попробуем из билетов
         tickets = model.get('Tickets', []) or model.get('tickets', [])
         if tickets:
-            # Первый билет может содержать полное имя
             first_ticket = tickets[0]
             if first_ticket.get('OwnerName'):
                 name = first_ticket['OwnerName']
@@ -52,7 +43,6 @@ def extract_customer_info(webhook_data):
             elif first_ticket.get('first_name') and first_ticket.get('last_name'):
                 name = f"{first_ticket['last_name']} {first_ticket['first_name']}"
 
-        # 2. Попробуем из пользователя
         if name == "Клиент Radario":
             user = model.get('User', {}) or model.get('user', {})
             if user.get('Name'):
@@ -64,11 +54,9 @@ def extract_customer_info(webhook_data):
             elif user.get('first_name') and user.get('last_name'):
                 name = f"{user['last_name']} {user['first_name']}"
 
-        # 3. Если есть в custom_data
         if name == "Клиент Radario":
             custom_data = model.get('CustomData') or model.get('customData', '')
             if custom_data and isinstance(custom_data, str):
-                # Парсим custom_data в поисках имени
                 try:
                     import json
                     custom_json = json.loads(custom_data)
@@ -81,33 +69,25 @@ def extract_customer_info(webhook_data):
                 except:
                     pass
 
-        # 4. Если все еще нет имени, используем email
         if name == "Клиент Radario" and email:
-            # Берем часть до @
             name = email.split('@')[0]
-            # Делаем первую букву заглавной
             name = name.capitalize()
 
-        # Данные о возврате
         refund_details = model.get('RefundDetails', {}) or model.get('refundDetails', {})
         refund_date = refund_details.get('RefundDate') if refund_details else None
 
-        # Получаем статусы
         status = model.get('Status') or model.get('status')
         payment_system_status = model.get('PaymentSystemStatus') or model.get('paymentSystemStatus')
 
-        # Для возвратов: если статус Refunded, но нет refund_date,
-        # используем updateDate или текущее время
         if (status == 'Refunded' or payment_system_status == 'Refund') and not refund_date:
             refund_date = model.get('UpdateDate') or model.get('updateDate')
             if not refund_date:
-                # Если нет даты возврата, используем текущее время
                 from datetime import datetime
                 refund_date = datetime.now().isoformat() + 'Z'
 
         return {
             'email': email,
-            'name': name,  # Теперь с правильным ФИО
+            'name': name,
             'phone': phone,
             'order_id': model.get('Id') or model.get('id'),
             'status': model.get('Status') or model.get('status'),
@@ -122,7 +102,7 @@ def extract_customer_info(webhook_data):
             'event_date': model.get('Event', {}).get('BeginDate', '') or model.get('event', {}).get('beginDate', ''),
             'tickets_count': len(tickets),
             'tickets': tickets,
-            'refund_date': refund_date,  # ← Должно быть заполнено
+            'refund_date': refund_date,
             'refund_details': refund_details,
             'payment_type': model.get('PaymentType') or model.get('paymentType', ''),
             'promocode': model.get('Promocode') or model.get('promocode', ''),
@@ -134,7 +114,6 @@ def extract_customer_info(webhook_data):
         }
     except Exception as e:
         logger.error(f"Error extracting customer info: {e}")
-        # Возвращаем минимальные данные в случае ошибки
         model = webhook_data.get('model', {})
         return {
             'email': model.get('Email', '') or model.get('email', ''),
@@ -150,10 +129,8 @@ def extract_customer_info(webhook_data):
 
 
 def create_lead_name(event_data, order_id):
-    """Создание названия для сделки в amoCRM - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
     event_title = event_data.get('Title') or event_data.get('title', 'Мероприятие')
 
-    # Обрезаем длинное название
     if len(event_title) > 100:
         event_title_short = event_title[:97] + "..."
     else:
@@ -166,30 +143,22 @@ def create_lead_name(event_data, order_id):
 
 
 def should_process_order(webhook_data):
-    """Проверяем, нужно ли обрабатывать заказ"""
-    # Обрабатываем ВСЕ заказы (Paid, Refunded, Cancelled и т.д.)
-    # чтобы заполнять информацию в amoCRM
     return True
 
 
 def format_name_for_amocrm(full_name):
-    """Форматирование ФИО для amoCRM (можно использовать в amocrm_client)"""
     if not full_name or full_name == "Покупатель билета" or full_name == "Клиент Radario":
         return "Клиент Radario"
 
-    # Убираем лишние пробелы
     parts = [p.strip() for p in str(full_name).split() if p.strip()]
 
     if len(parts) == 0:
         return "Клиент Radario"
     elif len(parts) == 1:
-        # Только имя
         return parts[0]
     elif len(parts) == 2:
-        # Имя Фамилия → Фамилия Имя
         return f"{parts[1]} {parts[0]}"
     elif len(parts) >= 3:
-        # Фамилия Имя Отчество → Фамилия И.О.
         last_name = parts[0]
         first_initial = parts[1][0] + "." if parts[1] else ""
         middle_initial = parts[2][0] + "." if len(parts) > 2 and parts[2] else ""

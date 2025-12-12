@@ -8,8 +8,6 @@ from .utils import format_name_for_amocrm
 logger = logging.getLogger(__name__)
 from .utils import create_lead_name
 
-# Добавьте в amocrm_client.p
-
 
 class AmoCRMClient:
     def __init__(self):
@@ -18,7 +16,6 @@ class AmoCRMClient:
         self.access_token = settings.AMOCRM_ACCESS_TOKEN
 
     def _make_request(self, method, endpoint, data=None):
-        """Упрощенный запрос"""
         url = f"{self.base_url}/{endpoint}"
         headers = {
             'Authorization': f'Bearer {self.access_token}',
@@ -44,25 +41,20 @@ class AmoCRMClient:
             raise
 
     def _create_compact_description(self, customer_info, event_type, payment_status):
-        """Создание компактного описания (максимум 256 символов)"""
 
-        # Ключевая информация
         info_parts = []
 
-        # 1. Основная информация
         if customer_info.get('order_id'):
             info_parts.append(f"Заказ: {customer_info['order_id']}")
 
         info_parts.append(event_type)
 
-        # 2. Короткое название мероприятия (обрезаем если длинное)
         if customer_info.get('event_title'):
             event_title = customer_info['event_title']
             if len(event_title) > 40:
                 event_title = event_title[:37] + "..."
             info_parts.append(event_title)
 
-        # 3. Статус и сумма
         info_parts.append(payment_status)
 
         if customer_info.get('amount'):
@@ -73,21 +65,16 @@ class AmoCRMClient:
                 amount_str = f"{amount:.0f} руб"
             info_parts.append(amount_str)
 
-        # 4. Билеты
         if customer_info.get('tickets_count', 0) > 0:
             tickets = customer_info['tickets_count']
             info_parts.append(f"{tickets} билет{'ов' if tickets > 1 else ''}")
 
-        # 5. Собираем в одну строку
         description = " • ".join(info_parts)
 
-        # 6. Добавляем источник в конце
         description += " • Источник: Radario"
 
-        # 7. Обрезаем до 256 символов
         if len(description) > 256:
-            # Пробуем сократить
-            description = " • ".join(info_parts[:4])  # Берем только первые 4 части
+            description = " • ".join(info_parts[:4])
             description += " • Radario"
 
             if len(description) > 256:
@@ -96,7 +83,6 @@ class AmoCRMClient:
         return description
 
     def find_contact_by_email(self, email):
-        """Поиск контакта по email"""
         try:
             endpoint = f"contacts?query={email}"
             data = self._make_request('GET', endpoint)
@@ -106,15 +92,13 @@ class AmoCRMClient:
             return None
 
     def create_lead(self, contact_id, lead_name, amount):
-        """Простой метод создания сделки для тестирования"""
-        # Сумма в копейках
         price = int(float(amount))
 
         lead_data = {
             "name": lead_name,
             "price": price,
-            "pipeline_id": 9713218,  # Воронка "Музей" ✓
-            "status_id": 77419554,  # Этап "Новая заявка" ✓
+            "pipeline_id": 9713218,
+            "status_id": 77419554,
             "_embedded": {
                 "contacts": [{"id": contact_id}]
             }
@@ -128,10 +112,7 @@ class AmoCRMClient:
             raise
 
     def find_contact_by_phone(self, phone):
-        """Поиск контакта по телефону"""
         try:
-            # Нужно настроить поиск по телефону
-            # Можно искать через кастомные поля
             return None
         except Exception as e:
             logger.error(f"Error finding contact by phone {phone}: {e}")
@@ -139,12 +120,10 @@ class AmoCRMClient:
 
 
     def create_contact(self, email, name, phone=None):
-        """Создание нового контакта"""
-        # Форматируем имя для amoCRM
         formatted_name = format_name_for_amocrm(name)
 
         contact_data = {
-            "name": formatted_name,  # Используем отформатированное имя
+            "name": formatted_name,
             "custom_fields_values": [
                 {
                     "field_code": "EMAIL",
@@ -168,14 +147,11 @@ class AmoCRMClient:
 
 
     def find_lead_by_order_id(self, order_id):
-        """Поиск сделки - ПРОСТАЯ РАБОЧАЯ ВЕРСИЯ"""
         try:
             logger.info(f"🔍 Поиск сделки: {order_id}")
 
-            # 1. Очищаем order_id от bash-команд
             clean_order_id = str(order_id).replace('$(date +%s)', '').replace('$(date)', '')
 
-            # 2. Ищем по очищенному order_id
             endpoint = f"leads?query={clean_order_id}&with=custom_fields"
             data = self._make_request('GET', endpoint)
 
@@ -185,7 +161,6 @@ class AmoCRMClient:
 
             leads = data['_embedded']['leads']
 
-            # 3. Возвращаем первую найденную сделку
             if leads:
                 logger.info(f"Найдено сделок: {len(leads)}, беру первую")
                 return leads[0]
@@ -197,7 +172,6 @@ class AmoCRMClient:
             return None
 
     def _map_event_type(self, event_title):
-        """Сопоставление типа события по ТЗ - ОБНОВЛЕННАЯ ВЕРСИЯ"""
         event_title_lower = event_title.lower()
 
         mapping = {
@@ -247,7 +221,6 @@ class AmoCRMClient:
             if key in event_title_lower:
                 return value
 
-        # Если не нашли соответствие, пытаемся определить по словам
         for key in mapping.keys():
             if key.replace('-', ' ') in event_title_lower:
                 return mapping[key]
@@ -255,12 +228,10 @@ class AmoCRMClient:
         return 'Другое'
 
     def _convert_to_timestamp(self, date_string):
-        """Конвертация даты из Radario в timestamp"""
         if not date_string:
             return int(time.time())
 
         try:
-            # Пробуем разные форматы дат
             formats = [
                 '%Y-%m-%dT%H:%M:%S.%fZ',
                 '%Y-%m-%dT%H:%M:%SZ',
@@ -275,16 +246,13 @@ class AmoCRMClient:
                 except ValueError:
                     continue
 
-            # Если не удалось распарсить, возвращаем текущее время
             return int(time.time())
 
         except Exception:
             return int(time.time())
 
     def create_lead_with_custom_fields(self, contact_id, customer_info):
-        """ФИНАЛЬНАЯ РАБОТАЮЩАЯ ВЕРСИЯ!"""
 
-        # 1. Основные данные
         event_type = self._map_event_type(customer_info.get('event_title', ''))
         event_enum_id = self._get_event_type_enum_id(event_type)
 
@@ -294,65 +262,47 @@ class AmoCRMClient:
         )
         status_enum_id = self._get_status_enum_id(payment_status)
 
-        # 2. Название сделки (макс 255 символов)
-
-
-        # ... в методе create_lead_with_custom_fields:
         lead_name = create_lead_name(
             {"Title": customer_info.get('event_title', '')},
             customer_info.get('order_id')
         )
         lead_name = lead_name[:255]
 
-        # 3. Сумма
         price = int(float(customer_info.get('amount', 0)))
 
-        # 4. Статус
         is_paid = (customer_info.get('status') == 'Paid' and
                    customer_info.get('payment_system_status') == 'Paid')
         pipeline_id = 9713218
         status_id = 77419554 if is_paid else 142
 
-        # 5. Компактное описание (256 символов максимум!)
         compact_description = self._create_compact_description(
             customer_info, event_type, payment_status
         )
 
-        # 6. Собираем поля
         custom_fields = []
-
-
-        # В методе create_lead_with_custom_fields, замените блок с order_id:
 
         if customer_info.get('order_id'):
             order_id_str = str(customer_info['order_id'])
 
-            # ВАЖНО: Если order_id содержит "$(date +%s)" или другие bash-команды
-            # Нужно либо очищать, либо использовать как есть
 
-            # Вариант A: Сохраняем как есть (строку)
             order_id_value = order_id_str
 
-            # Или Вариант B: Извлекаем ЧТО-ТО из order_id
             import re
 
-            # Ищем любые цифры или буквенно-цифровые комбинации
-            if re.search(r'[A-Za-z]+-\d+', order_id_str):  # Найдет "TEST-123"
-                # Берем часть после последнего дефиса
+            if re.search(r'[A-Za-z]+-\d+', order_id_str):
                 parts = order_id_str.split('-')
                 if len(parts) > 1:
-                    order_id_value = parts[-1]  # Последняя часть
+                    order_id_value = parts[-1]
                 else:
                     order_id_value = order_id_str
             else:
-                # Если не нашли паттерн, используем хэш
                 order_id_value = str(abs(hash(order_id_str)) % 1000000)
 
             logger.info(f"Сохраняю order_id: '{order_id_str}' -> '{order_id_value}'")
 
             custom_fields.append({
                 "field_id": 986103,
-                "values": [{"value": order_id_value}]  # Сохраняем как СТРОКУ!
+                "values": [{"value": order_id_value}]
             })
 
         if customer_info.get('tickets_count', 0) > 0:
@@ -361,20 +311,17 @@ class AmoCRMClient:
                 "values": [{"value": customer_info['tickets_count']}]
             })
 
-        # Б) Текстовые поля
         if customer_info.get('event_title'):
             custom_fields.append({
                 "field_id": 986251,
                 "values": [{"value": str(customer_info['event_title'])[:100]}]
             })
 
-        # В) Описание мероприятия (256 символов!)
         custom_fields.append({
             "field_id": 976741,
             "values": [{"value": compact_description}]
         })
 
-        # Г) SELECT поля
         if event_enum_id:
             custom_fields.append({
                 "field_id": 986255,
@@ -388,16 +335,15 @@ class AmoCRMClient:
             })
 
         custom_fields.append({
-            "field_id": 976809,  # Источник
-            "values": [{"enum_id": 973649}]  # "Сайт"
+            "field_id": 976809,
+            "values": [{"enum_id": 973649}]
         })
 
         custom_fields.append({
-            "field_id": 986099,  # Вид оплаты
-            "values": [{"enum_id": 985093}]  # "Онлайн"
+            "field_id": 986099,
+            "values": [{"enum_id": 985093}]
         })
 
-        # Д) Поля даты
         if customer_info.get('payment_date'):
             timestamp = self._convert_to_timestamp(customer_info['payment_date'])
             if timestamp:
@@ -414,7 +360,6 @@ class AmoCRMClient:
                     "values": [{"value": timestamp}]
                 })
 
-        # Е) Возврат
         if customer_info.get('status') == 'Refunded' or customer_info.get('payment_system_status') == 'Refund':
             refund_timestamp = int(time.time())
             if customer_info.get('refund_date'):
@@ -425,7 +370,6 @@ class AmoCRMClient:
                 "values": [{"value": refund_timestamp}]
             })
 
-        # 7. Создаем сделку
         lead_data = {
             "name": lead_name,
             "price": price,
@@ -437,7 +381,6 @@ class AmoCRMClient:
             }
         }
 
-        # 8. Полная информация в примечании
         full_note = f"""🎫 Radario #{customer_info.get('order_id', 'N/A')}
     Тип: {event_type}
     Мероприятие: {customer_info.get('event_title', 'N/A')}
@@ -468,35 +411,30 @@ class AmoCRMClient:
             raise
 
     def update_lead_for_refund(self, lead_id, customer_info):
-        """Обновление сделки при возврате - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
 
-        # Получаем статус для поля "Статус оплаты"
         payment_status = self._map_status_for_field(
             customer_info.get('status', ''),
             customer_info.get('payment_system_status', '')
         )
         status_enum_id = self._get_status_enum_id(payment_status)
 
-        # Убрали loss_reason_id
         update_data = {
             "id": lead_id,
-            "status_id": 143,  # Закрыто и не реализовано
+            "status_id": 143,
         }
 
-        # Добавляем обновление статуса оплаты
         if status_enum_id:
             update_data["custom_fields_values"] = [{
-                "field_id": 986105,  # Статус оплаты
-                "values": [{"enum_id": status_enum_id}]  # 985099 для Возврат
+                "field_id": 986105,
+                "values": [{"enum_id": status_enum_id}]
             }]
 
-        # Добавляем дату возврата если есть
         if customer_info.get('refund_date'):
             if "custom_fields_values" not in update_data:
                 update_data["custom_fields_values"] = []
 
             update_data["custom_fields_values"].append({
-                "field_id": 986123,  # Дата возврата
+                "field_id": 986123,
                 "values": [{"value": self._convert_to_timestamp(customer_info.get('refund_date'))}]
             })
 
@@ -510,8 +448,6 @@ class AmoCRMClient:
             raise
 
     def update_lead(self, lead_id, customer_info, status_id=None):
-        """Обновление сделки при изменении статуса/суммы"""
-        # Определяем статус для поля
         status_value = self._map_status_for_field(
             customer_info['status'],
             customer_info['payment_system_status']
@@ -520,17 +456,15 @@ class AmoCRMClient:
 
         update_data = {
             "id": lead_id,
-            "price": int(customer_info['amount']),  # Обновляем сумму
+            "price": int(customer_info['amount']),
         }
 
-        # Если передан новый статус сделки - добавляем его
         if status_id:
             update_data["status_id"] = status_id
 
-        # Добавляем обновление статуса оплаты
         if status_enum_id:
             update_data["custom_fields_values"] = [{
-                "field_id": 986105,  # Статус оплаты
+                "field_id": 986105,
                 "values": [{"enum_id": status_enum_id}]
             }]
 
@@ -544,21 +478,18 @@ class AmoCRMClient:
             raise
 
     def _map_status_for_field(self, status, payment_system_status):
-        """Сопоставление статуса для поля 986105 - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         if status == 'Paid' and payment_system_status == 'Paid':
-            return 'Оплачен'  # Будет преобразован в "Оплачено" в _get_status_enum_id
+            return 'Оплачен'
         elif status == 'Refund' or payment_system_status == 'Refund' or status == 'Refunded':
             return 'Возврат'
         elif status == 'Pending':
-            return 'В обработке'  # Временное решение
+            return 'В обработке'
         elif status == 'Cancelled':
-            return 'Отменен'  # Временное решение
+            return 'Отменен'
         else:
-            return 'Неизвестно'  # Временное решение
+            return 'Неизвестно'
 
     def _get_event_type_enum_id(self, event_type):
-        """Получение enum_id для типа события - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
-        # Реальные значения из AmoCRM
         mapping = {
             'Мастер-класс': 985177,
             'Программа': 985179,
@@ -586,51 +517,43 @@ class AmoCRMClient:
             'Воркшоп': 985223,
             'Арт-терапия': 985225,
             'Занятие': 985227,
-            'Паблик-топ': 985229,  # Осторожно: в AmoCRM "Паблик-ток", а у вас "Паблик-топ"
+            'Паблик-топ': 985229,
             'TED-talk': 985231,
             'Показ': 985233,
             'Диалог': 985235,
             'Книжный клуб': 986271,
-            'Другое': None  # Нужно добавить вариант "Другое" в AmoCRM или использовать ближайший
+            'Другое': None
         }
 
-        # Ищем точное совпадение
         if event_type in mapping:
             return mapping[event_type]
 
-        # Ищем без учета регистра
         for key, enum_id in mapping.items():
             if key.lower() == event_type.lower():
                 return enum_id
 
-        # Если не нашли, используем "Мастер-класс" как default
         logger.warning(f"Не найден enum_id для типа события: {event_type}, использую 'Мастер-класс'")
-        return 985177  # Мастер-класс
+        return 985177
 
     def _get_source_enum_id(self, source):
-        """Получение enum_id для источника заказа"""
-        # Теперь не используется, так как поле 986099 оказалось "Вид оплаты"
-        return 1  # Заглушка
+        return 1
 
     def _get_status_enum_id(self, status):
-        """Получение enum_id для статуса - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
-        # Реальные значения из AmoCRM
         mapping = {
-            'Оплачен': 985097,  # "Оплачено" в AmoCRM
+            'Оплачен': 985097,
             'Возврат': 985099,
-            'В обработке': None,  # Нет такого варианта в AmoCRM
-            'Отменен': None,  # Нет такого варианта в AmoCRM
-            'Неизвестно': None  # Нет такого варианта в AmoCRM
+            'В обработке': None,
+            'Отменен': None,
+            'Неизвестно': None
         }
 
-        # Маппинг наших статусов на доступные в AmoCRM
         status_to_amo = {
             'Оплачен': 'Оплачено',
             'Возврат': 'Возврат',
-            'В обработке': 'Оплачено',  # Временное решение
-            'Отменен': 'Оплачено',  # Временное решение
-            'Неизвестно': 'Оплачено'  # Временное решение
+            'В обработке': 'Оплачено',
+            'Отменен': 'Оплачено',
+            'Неизвестно': 'Оплачено'
         }
 
         mapped_status = status_to_amo.get(status, 'Оплачено')
-        return mapping.get(mapped_status, 985097)  # По умолчанию "Оплачено"
+        return mapping.get(mapped_status, 985097)
