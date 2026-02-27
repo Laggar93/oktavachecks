@@ -2,11 +2,12 @@ import requests
 import logging
 import json
 import time
+import re
 from datetime import datetime
 from django.conf import settings
-from .utils import format_name_for_amocrm
+from .utils import format_name_for_amocrm, create_lead_name
+
 logger = logging.getLogger(__name__)
-from .utils import create_lead_name
 
 
 class AmoCRMClient:
@@ -22,12 +23,26 @@ class AmoCRMClient:
             'Content-Type': 'application/json'
         }
 
+        logger.info(f"🔍 API Request: {method} {url}")
+        if data:
+            logger.info(f"📦 Request data preview: {json.dumps(data, indent=2, ensure_ascii=False)[:1000]}")
+
         try:
             response = requests.request(method, url, headers=headers, json=data, timeout=30)
 
+            logger.info(f"📥 Response status: {response.status_code}")
+
+            # Логируем полный ответ от amoCRM при ошибке
+            if response.status_code >= 400:
+                logger.error(f"❌ API Error Response: {response.text}")
+                try:
+                    error_json = response.json()
+                    logger.error(f"❌ Error details: {json.dumps(error_json, indent=2, ensure_ascii=False)}")
+                except:
+                    pass
+
             if response.status_code == 401:
                 logger.error("Долгосрочный токен истек или неверный! Нужно обновить токен в amoCRM.")
-                logger.error(f"Полный ответ: {response.text}")
                 raise Exception(f"Token invalid: {response.text}")
 
             response.raise_for_status()
@@ -41,7 +56,6 @@ class AmoCRMClient:
             raise
 
     def _create_compact_description(self, customer_info, event_type, payment_status):
-
         info_parts = []
 
         if customer_info.get('order_id'):
@@ -70,13 +84,11 @@ class AmoCRMClient:
             info_parts.append(f"{tickets} билет{'ов' if tickets > 1 else ''}")
 
         description = " • ".join(info_parts)
-
         description += " • Источник: Radario"
 
         if len(description) > 256:
             description = " • ".join(info_parts[:4])
             description += " • Radario"
-
             if len(description) > 256:
                 description = description[:253] + "..."
 
@@ -118,10 +130,13 @@ class AmoCRMClient:
             logger.error(f"Error finding contact by phone {phone}: {e}")
             return None
 
-
-    def create_contact(self, email, name, phone=None):
+    def create_contact(self, email, name, phone=None, is_agree_ads=False):
+        """
+        Создает контакт в amoCRM с email, телефоном и согласием на рассылку
+        """
         formatted_name = format_name_for_amocrm(name)
 
+        # Базовые поля контакта
         contact_data = {
             "name": formatted_name,
             "custom_fields_values": [
@@ -132,19 +147,77 @@ class AmoCRMClient:
             ]
         }
 
+        # Добавляем телефон, если есть
         if phone:
             contact_data["custom_fields_values"].append({
                 "field_code": "PHONE",
                 "values": [{"value": phone, "enum_code": "WORK"}]
             })
 
+        # ДОБАВЛЯЕМ СОГЛАСИЕ НА РАССЫЛКУ В КОНТАКТ (поле 989771)
+        if isinstance(is_agree_ads, str):
+            is_agree_ads = is_agree_ads.lower() == 'true'
+        is_agree_ads = bool(is_agree_ads)
+
+        contact_data["custom_fields_values"].append({
+            "field_id": 989771,  # ID поля "Согласен с рассылкой" в контактах
+            "values": [
+                {
+                    "enum_id": 989895 if is_agree_ads else 989897  # Да/Нет
+                }
+            ]
+        })
+
+        logger.info(f"📧 СОЗДАНИЕ КОНТАКТА: email={email}, is_agree_ads={is_agree_ads} -> enum_id: {989895 if is_agree_ads else 989897}")
+
         try:
             data = self._make_request('POST', 'contacts', [contact_data])
-            return data['_embedded']['contacts'][0]
+            contact = data['_embedded']['contacts'][0]
+            logger.info(f"✅ Контакт создан: {contact['id']}")
+            return contact
         except Exception as e:
-            logger.error(f"Error creating contact: {e}")
+            logger.error(f"❌ Ошибка создания контакта: {e}")
             raise
 
+    def update_contact(self, contact_id, customer_info):
+        """
+        Обновляет существующий контакт в amoCRM (согласие на рассылку)
+        """
+        update_data = {
+            "id": contact_id,
+            "custom_fields_values": []
+        }
+
+        # Обновляем согласие на рассылку, если оно есть в данных
+        if 'is_agree_ads' in customer_info:
+            is_agree_ads = customer_info.get('is_agree_ads', False)
+            if isinstance(is_agree_ads, str):
+                is_agree_ads = is_agree_ads.lower() == 'true'
+            is_agree_ads = bool(is_agree_ads)
+
+            update_data["custom_fields_values"].append({
+                "field_id": 989771,
+                "values": [
+                    {
+                        "enum_id": 989895 if is_agree_ads else 989897
+                    }
+                ]
+            })
+
+            logger.info(f"📧 Обновляю согласие на рассылку для контакта {contact_id}: {is_agree_ads}")
+
+        # Если нет полей для обновления, не отправляем запрос
+        if not update_data["custom_fields_values"]:
+            logger.info(f"ℹ️ Нет полей для обновления контакта {contact_id}")
+            return None
+
+        try:
+            data = self._make_request('PATCH', f'contacts/{contact_id}', update_data)
+            logger.info(f"✅ Контакт {contact_id} обновлен")
+            return data
+        except Exception as e:
+            logger.error(f"❌ Ошибка обновления контакта {contact_id}: {e}")
+            raise
 
     def find_lead_by_order_id(self, order_id):
         try:
@@ -252,166 +325,200 @@ class AmoCRMClient:
             return int(time.time())
 
     def create_lead_with_custom_fields(self, contact_id, customer_info):
-
+        """
+        Создает сделку в amoCRM с кастомными полями (БЕЗ поля согласия на рассылку)
+        """
+        # Определяем тип события
         event_type = self._map_event_type(customer_info.get('event_title', ''))
         event_enum_id = self._get_event_type_enum_id(event_type)
 
+        # Определяем статус платежа
         payment_status = self._map_status_for_field(
             customer_info.get('status', ''),
             customer_info.get('payment_system_status', '')
         )
         status_enum_id = self._get_status_enum_id(payment_status)
 
+        # Создаем название сделки
         lead_name = create_lead_name(
             {"Title": customer_info.get('event_title', '')},
             customer_info.get('order_id')
         )
         lead_name = lead_name[:255]
 
+        # Цена сделки
         price = int(float(customer_info.get('amount', 0)))
 
+        # Определяем статус воронки
         is_paid = (customer_info.get('status') == 'Paid' and
                    customer_info.get('payment_system_status') == 'Paid')
         pipeline_id = 9713218
         status_id = 77419554 if is_paid else 142
 
+        # Создаем компактное описание
         compact_description = self._create_compact_description(
             customer_info, event_type, payment_status
         )
 
-        custom_fields = []
+        # Собираем кастомные поля для сделки (БЕЗ 989771)
+        custom_fields_values = []
 
+        # 1. Номер заказа (поле 986103)
         if customer_info.get('order_id'):
             order_id_str = str(customer_info['order_id'])
-
-
-            order_id_value = order_id_str
-
-            import re
-
             if re.search(r'[A-Za-z]+-\d+', order_id_str):
                 parts = order_id_str.split('-')
-                if len(parts) > 1:
-                    order_id_value = parts[-1]
-                else:
-                    order_id_value = order_id_str
+                order_id_value = parts[-1] if len(parts) > 1 else order_id_str
             else:
                 order_id_value = str(abs(hash(order_id_str)) % 1000000)
 
-            logger.info(f"Сохраняю order_id: '{order_id_str}' -> '{order_id_value}'")
-
-            custom_fields.append({
+            logger.info(f"💳 Сохраняю order_id: '{order_id_str}' -> '{order_id_value}'")
+            custom_fields_values.append({
                 "field_id": 986103,
                 "values": [{"value": order_id_value}]
             })
 
+        # 2. Количество билетов (поле 986253)
         if customer_info.get('tickets_count', 0) > 0:
-            custom_fields.append({
+            custom_fields_values.append({
                 "field_id": 986253,
                 "values": [{"value": customer_info['tickets_count']}]
             })
 
+        # 3. Название мероприятия (поле 986251)
         if customer_info.get('event_title'):
-            custom_fields.append({
+            custom_fields_values.append({
                 "field_id": 986251,
                 "values": [{"value": str(customer_info['event_title'])[:100]}]
             })
 
-        custom_fields.append({
+        # 4. Компактное описание (поле 976741)
+        custom_fields_values.append({
             "field_id": 976741,
             "values": [{"value": compact_description}]
         })
 
+        # 5. Тип события (поле 986255)
         if event_enum_id:
-            custom_fields.append({
+            custom_fields_values.append({
                 "field_id": 986255,
                 "values": [{"enum_id": event_enum_id}]
             })
 
+        # 6. Статус платежа (поле 986105)
         if status_enum_id:
-            custom_fields.append({
+            custom_fields_values.append({
                 "field_id": 986105,
                 "values": [{"enum_id": status_enum_id}]
             })
 
-        custom_fields.append({
+        # 7. Источник (поле 976809)
+        custom_fields_values.append({
             "field_id": 976809,
-            "values": [{"enum_id": 973649}]
+            "values": [{"enum_id": 973649}]  # Radario
         })
 
-        custom_fields.append({
+        # 8. Тип продажи (поле 986099)
+        custom_fields_values.append({
             "field_id": 986099,
-            "values": [{"enum_id": 985093}]
+            "values": [{"enum_id": 985093}]  # Онлайн
         })
 
+        # 9. Дата оплаты (поле 986101)
         if customer_info.get('payment_date'):
             timestamp = self._convert_to_timestamp(customer_info['payment_date'])
             if timestamp:
-                custom_fields.append({
+                custom_fields_values.append({
                     "field_id": 986101,
                     "values": [{"value": timestamp}]
                 })
 
+        # 10. Дата мероприятия (поле 976983)
         if customer_info.get('event_date'):
             timestamp = self._convert_to_timestamp(customer_info['event_date'])
             if timestamp:
-                custom_fields.append({
+                custom_fields_values.append({
                     "field_id": 976983,
                     "values": [{"value": timestamp}]
                 })
 
+        # 11. Дата возврата (поле 986123) - для возвратов
         if customer_info.get('status') == 'Refunded' or customer_info.get('payment_system_status') == 'Refund':
             refund_timestamp = int(time.time())
             if customer_info.get('refund_date'):
                 refund_timestamp = self._convert_to_timestamp(customer_info['refund_date'])
 
-            custom_fields.append({
+            custom_fields_values.append({
                 "field_id": 986123,
                 "values": [{"value": refund_timestamp}]
             })
 
+        # Формируем данные сделки
         lead_data = {
             "name": lead_name,
             "price": price,
             "pipeline_id": pipeline_id,
             "status_id": status_id,
-            "custom_fields_values": custom_fields,
             "_embedded": {
                 "contacts": [{"id": contact_id}]
             }
         }
 
-        full_note = f"""🎫 Radario #{customer_info.get('order_id', 'N/A')}
-    Тип: {event_type}
-    Мероприятие: {customer_info.get('event_title', 'N/A')}
-    Статус: {customer_info.get('status', 'N/A')} ({customer_info.get('payment_system_status', 'N/A')})
-    Сумма: {customer_info.get('amount', 0)} руб
-    Билетов: {customer_info.get('tickets_count', 0)}
-    Email: {customer_info.get('email', 'N/A')}
-    Телефон: {customer_info.get('phone', 'N/A')}
-    Дата: {customer_info.get('event_date', 'N/A')}
-    Оплата: {customer_info.get('payment_date', 'N/A')}"""
+        if custom_fields_values:
+            lead_data["custom_fields_values"] = custom_fields_values
 
-        lead_data["notes"] = [{
+        # Создаем примечание с полной информацией (БЕЗ согласия на рассылку - оно в контакте)
+        full_note = f"""🎫 Radario #{customer_info.get('order_id', 'N/A')}
+        Тип: {event_type}
+        Мероприятие: {customer_info.get('event_title', 'N/A')}
+        Статус: {customer_info.get('status', 'N/A')} ({customer_info.get('payment_system_status', 'N/A')})
+        Сумма: {customer_info.get('amount', 0)} руб
+        Билетов: {customer_info.get('tickets_count', 0)}
+        Email: {customer_info.get('email', 'N/A')}
+        Телефон: {customer_info.get('phone', 'N/A')}
+        Дата: {customer_info.get('event_date', 'N/A')}
+        Оплата: {customer_info.get('payment_date', 'N/A')}"""
+
+        lead_data_with_notes = lead_data.copy()
+        lead_data_with_notes["notes"] = [{
             "note_type": "common",
             "params": {
                 "text": full_note[:4000]
             }
         }]
 
-        logger.info(f"Создаю сделку '{lead_name}' с {len(custom_fields)} полями")
+        logger.info(f"🚀 Создаю сделку '{lead_name}' с {len(custom_fields_values)} полями")
+
+        # Логируем даты перед отправкой
+        logger.info(f"📅 Отправляемые даты:")
+        logger.info(f"   - Дата мероприятия (field 976983): {customer_info.get('event_date')}")
+        logger.info(f"   - Дата оплаты (field 986101): {customer_info.get('payment_date')}")
 
         try:
-            data = self._make_request('POST', 'leads', [lead_data])
-            lead = data['_embedded']['leads'][0]
-            logger.info(f"✅ Сделка создана: {lead['id']}")
-            return lead
+            data = self._make_request('POST', 'leads', [lead_data_with_notes])
+
+            if data and '_embedded' in data and 'leads' in data['_embedded']:
+                lead = data['_embedded']['leads'][0]
+                logger.info(f"✅ Сделка создана: {lead['id']}")
+                return lead
+            else:
+                logger.error(f"❌ Неожиданный ответ от API: {data}")
+                raise Exception(f"Unexpected API response: {data}")
+
         except Exception as e:
-            logger.error(f"❌ Ошибка: {e}")
+            logger.error(f"❌ Ошибка создания сделки: {e}")
+            if hasattr(e, 'response') and e.response:
+                try:
+                    error_data = e.response.json()
+                    logger.error(f"Ответ API: {json.dumps(error_data, indent=2, ensure_ascii=False)}")
+                except:
+                    logger.error(f"Текст ответа: {e.response.text}")
             raise
 
     def update_lead_for_refund(self, lead_id, customer_info):
-
+        """
+        Обновляет сделку при возврате средств (БЕЗ обновления согласия на рассылку)
+        """
         payment_status = self._map_status_for_field(
             customer_info.get('status', ''),
             customer_info.get('payment_system_status', '')
@@ -419,35 +526,51 @@ class AmoCRMClient:
         status_enum_id = self._get_status_enum_id(payment_status)
 
         update_data = {
-            "id": lead_id,
-            "status_id": 143,
+            "status_id": 143,  # Статус "Возврат"
+            "loss_reason_id": 976851  # Причина "Возврат от Radario"
         }
 
+        custom_fields = []
+
+        # 1. Обновляем статус платежа на "Возврат"
         if status_enum_id:
-            update_data["custom_fields_values"] = [{
+            custom_fields.append({
                 "field_id": 986105,
                 "values": [{"enum_id": status_enum_id}]
-            }]
-
-        if customer_info.get('refund_date'):
-            if "custom_fields_values" not in update_data:
-                update_data["custom_fields_values"] = []
-
-            update_data["custom_fields_values"].append({
-                "field_id": 986123,
-                "values": [{"value": self._convert_to_timestamp(customer_info.get('refund_date'))}]
             })
 
-        logger.info(f"Обновляю сделку {lead_id} для возврата")
+        # 2. Добавляем дату возврата
+        if customer_info.get('refund_date'):
+            refund_timestamp = self._convert_to_timestamp(customer_info['refund_date'])
+            custom_fields.append({
+                "field_id": 986123,
+                "values": [{"value": refund_timestamp}]
+            })
+        else:
+            custom_fields.append({
+                "field_id": 986123,
+                "values": [{"value": int(time.time())}]
+            })
+
+        if custom_fields:
+            update_data["custom_fields_values"] = custom_fields
+
+        logger.info(f"🔄 Обновляю сделку {lead_id} для возврата")
 
         try:
             data = self._make_request('PATCH', f'leads/{lead_id}', update_data)
+            logger.info(f"✅ Сделка {lead_id} успешно обновлена для возврата")
             return data
         except Exception as e:
-            logger.error(f"Error updating lead for refund {lead_id}: {e}")
+            logger.error(f"❌ Ошибка обновления сделки {lead_id} для возврата: {e}")
+            if hasattr(e, 'response') and e.response:
+                logger.error(f"Ответ API: {e.response.text}")
             raise
 
     def update_lead(self, lead_id, customer_info, status_id=None):
+        """
+        Обновляет существующую сделку (БЕЗ обновления согласия на рассылку)
+        """
         status_value = self._map_status_for_field(
             customer_info['status'],
             customer_info['payment_system_status']
@@ -456,25 +579,41 @@ class AmoCRMClient:
 
         update_data = {
             "id": lead_id,
-            "price": int(customer_info['amount']),
+            "price": int(float(customer_info['amount'])),
         }
 
         if status_id:
             update_data["status_id"] = status_id
 
+        custom_fields = []
+
+        # Обновляем статус платежа
         if status_enum_id:
-            update_data["custom_fields_values"] = [{
+            custom_fields.append({
                 "field_id": 986105,
                 "values": [{"enum_id": status_enum_id}]
-            }]
+            })
 
-        logger.info(f"Обновляю сделку {lead_id}")
+        # Обновляем количество билетов
+        if customer_info.get('tickets_count', 0) > 0:
+            custom_fields.append({
+                "field_id": 986253,
+                "values": [{"value": customer_info['tickets_count']}]
+            })
+
+        if custom_fields:
+            update_data["custom_fields_values"] = custom_fields
+
+        logger.info(f"📝 Обновляю сделку {lead_id}")
 
         try:
             data = self._make_request('PATCH', f'leads/{lead_id}', update_data)
+            logger.info(f"✅ Сделка {lead_id} успешно обновлена")
             return data
         except Exception as e:
-            logger.error(f"Error updating lead {lead_id}: {e}")
+            logger.error(f"❌ Ошибка обновления сделки {lead_id}: {e}")
+            if hasattr(e, 'response') and e.response:
+                logger.error(f"Ответ API: {e.response.text}")
             raise
 
     def _map_status_for_field(self, status, payment_system_status):
@@ -534,9 +673,6 @@ class AmoCRMClient:
 
         logger.warning(f"Не найден enum_id для типа события: {event_type}, использую 'Мастер-класс'")
         return 985177
-
-    def _get_source_enum_id(self, source):
-        return 1
 
     def _get_status_enum_id(self, status):
         mapping = {

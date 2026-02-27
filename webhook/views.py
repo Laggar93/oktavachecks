@@ -44,14 +44,18 @@ def radario_webhook(request):
 
         contact = amocrm.find_contact_by_email(customer_info['email'])
 
+        # Найдите место, где создается/обновляется контакт
         if contact:
             contact_id = contact['id']
             logger.info(f"Found existing contact: {contact_id}")
+            # Обновляем контакт (например, согласие на рассылку могло измениться)
+            amocrm.update_contact(contact_id, customer_info)
         else:
             contact = amocrm.create_contact(
                 email=customer_info['email'],
                 name=customer_info['name'],
-                phone=customer_info['phone']
+                phone=customer_info['phone'],
+                is_agree_ads=customer_info.get('is_agree_ads', False)  # Передаем согласие
             )
             contact_id = contact['id']
             logger.info(f"Created new contact: {contact_id}")
