@@ -425,15 +425,7 @@ class AmoCRMClient:
         })
 
         # 9. Дата оплаты (поле 986101)
-        if customer_info.get('payment_date'):
-            timestamp = self._convert_to_timestamp(customer_info['payment_date'])
-            if timestamp:
-                custom_fields_values.append({
-                    "field_id": 986101,
-                    "values": [{"value": timestamp}]
-                })
-
-        # 10. Дата мероприятия (поле 976983)
+        # ДАТА МЕРОПРИЯТИЯ (поле 976983)
         if customer_info.get('event_date'):
             timestamp = self._convert_to_timestamp(customer_info['event_date'])
             if timestamp:
@@ -441,6 +433,17 @@ class AmoCRMClient:
                     "field_id": 976983,
                     "values": [{"value": timestamp}]
                 })
+                logger.info(f"📅 ДАТА МЕРОПРИЯТИЯ (field 976983): {customer_info['event_date']}")
+
+        # ДАТА ОПЛАТЫ (поле 986101)
+        if customer_info.get('payment_date'):
+            timestamp = self._convert_to_timestamp(customer_info['payment_date'])
+            if timestamp:
+                custom_fields_values.append({
+                    "field_id": 986101,
+                    "values": [{"value": timestamp}]
+                })
+                logger.info(f"💰 ДАТА ОПЛАТЫ (field 986101): {customer_info['payment_date']}")
 
         # 11. Дата возврата (поле 986123) - для возвратов
         if customer_info.get('status') == 'Refunded' or customer_info.get('payment_system_status') == 'Refund':
