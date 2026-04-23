@@ -33,22 +33,19 @@ def extract_customer_info(webhook_data):
         email = model.get('Email', '') or model.get('email', '')
         phone = model.get('User', {}).get('Phone', '') or model.get('user', {}).get('phone', '')
 
-        # ИЗВЛЕЧЕНИЕ СОГЛАСИЯ НА РАССЫЛКУ (исправлено)
+        # ИЗВЛЕЧЕНИЕ СОГЛАСИЯ НА РАССЫЛКУ
         is_agree_ads = False
 
-        # 1. Пробуем получить из прямого поля model.isAgreeAds
         if 'isAgreeAds' in model:
             is_agree_ads = model['isAgreeAds']
             logger.info(f"📋 isAgreeAds найден в model: {is_agree_ads} (тип: {type(is_agree_ads)})")
 
-        # 2. Пробуем получить из user
         elif 'user' in model and isinstance(model['user'], dict):
             user_ads = model['user'].get('isAgreeAds', False)
             if user_ads:
                 is_agree_ads = user_ads
                 logger.info(f"📋 isAgreeAds найден в user: {is_agree_ads}")
 
-        # 3. Пробуем получить из CustomData (если приходит как JSON строка)
         elif 'CustomData' in model and model['CustomData']:
             try:
                 custom_data = model['CustomData']
@@ -60,7 +57,6 @@ def extract_customer_info(webhook_data):
             except:
                 pass
 
-        # 4. Пробуем получить из Tickets (редко, но проверим)
         elif 'Tickets' in model and model['Tickets']:
             for ticket in model['Tickets']:
                 if isinstance(ticket, dict) and 'isAgreeAds' in ticket:
@@ -68,18 +64,14 @@ def extract_customer_info(webhook_data):
                     logger.info(f"📋 isAgreeAds найден в Ticket: {is_agree_ads}")
                     break
 
-        # Конвертируем строковые значения в булевы
         if isinstance(is_agree_ads, str):
             is_agree_ads = is_agree_ads.lower() in ['true', '1', 'yes', 'да']
-            logger.info(f"📋 isAgreeAds конвертирован из строки: {is_agree_ads}")
 
-        # Убеждаемся, что это булево значение
         is_agree_ads = bool(is_agree_ads)
 
         # Извлечение имени
         name = "Клиент Radario"
 
-        # Пробуем получить имя из Tickets
         tickets = model.get('Tickets', []) or model.get('tickets', [])
         if tickets and isinstance(tickets, list):
             first_ticket = tickets[0] if tickets else {}
@@ -91,7 +83,6 @@ def extract_customer_info(webhook_data):
                 elif first_ticket.get('firstName') and first_ticket.get('lastName'):
                     name = f"{first_ticket['lastName']} {first_ticket['firstName']}"
 
-        # Если не нашли в Tickets, пробуем из User
         if name == "Клиент Radario":
             user = model.get('User', {}) or model.get('user', {})
             if isinstance(user, dict):
@@ -100,9 +91,38 @@ def extract_customer_info(webhook_data):
                 elif user.get('FirstName') and user.get('LastName'):
                     name = f"{user['LastName']} {user['FirstName']}"
 
-        # Если все еще не нашли, используем часть email
         if name == "Клиент Radario" and email:
             name = email.split('@')[0].capitalize()
+
+        # ИЗВЛЕЧЕНИЕ ТИПА БИЛЕТА
+        # Пробуем получить из первого тикета поле TicketType / ticketType / CategoryName
+        ticket_type = ''
+        if tickets and isinstance(tickets, list):
+            first_ticket = tickets[0] if tickets else {}
+            if isinstance(first_ticket, dict):
+                ticket_type = (
+                    first_ticket.get('TicketType')
+                    or first_ticket.get('ticketType')
+                    or first_ticket.get('CategoryName')
+                    or first_ticket.get('categoryName')
+                    or first_ticket.get('TypeName')
+                    or first_ticket.get('typeName')
+                    or ''
+                )
+
+        # Если в одном тикете несколько разных типов — собираем уникальные
+        if not ticket_type and tickets:
+            types = []
+            for t in tickets:
+                if isinstance(t, dict):
+                    t_type = (
+                        t.get('TicketType') or t.get('ticketType')
+                        or t.get('CategoryName') or t.get('categoryName')
+                        or t.get('TypeName') or t.get('typeName')
+                    )
+                    if t_type and t_type not in types:
+                        types.append(t_type)
+            ticket_type = ', '.join(types)
 
         # Извлечение информации о возврате
         refund_details = model.get('RefundDetails', {}) or model.get('refundDetails', {})
@@ -110,15 +130,12 @@ def extract_customer_info(webhook_data):
         if refund_details and isinstance(refund_details, dict):
             refund_date = refund_details.get('RefundDate') or refund_details.get('refundDate')
 
-        # Статусы
         status = model.get('Status') or model.get('status')
         payment_system_status = model.get('PaymentSystemStatus') or model.get('paymentSystemStatus')
 
-        # Если это возврат, но нет даты, используем дату обновления
         if (status == 'Refunded' or payment_system_status == 'Refund') and not refund_date:
             refund_date = model.get('UpdateDate') or model.get('updateDate')
 
-        # Формируем результат
         customer_info = {
             'email': email,
             'name': name,
@@ -136,6 +153,7 @@ def extract_customer_info(webhook_data):
             'event_date': model.get('Event', {}).get('BeginDate', '') or model.get('event', {}).get('beginDate', ''),
             'tickets_count': len(tickets) if tickets else 0,
             'tickets': tickets,
+            'ticket_type': ticket_type,  # НОВОЕ ПОЛЕ для воронки Кластер
             'refund_date': refund_date,
             'refund_details': refund_details,
             'payment_type': model.get('PaymentType') or model.get('paymentType', ''),
@@ -145,15 +163,14 @@ def extract_customer_info(webhook_data):
             'utm_data': model.get('UtmData') or model.get('utmData', {}),
             'custom_data': model.get('CustomData') or model.get('customData', ''),
             'source': 'Radario',
-            'is_agree_ads': is_agree_ads,  # ИСПРАВЛЕНО: правильное значение
+            'is_agree_ads': is_agree_ads,
         }
 
-        logger.info(f"📊 Итоговая информация о клиенте: email={email}, is_agree_ads={is_agree_ads}")
+        logger.info(f"📊 Итоговая информация о клиенте: email={email}, is_agree_ads={is_agree_ads}, ticket_type={ticket_type}")
         return customer_info
 
     except Exception as e:
         logger.error(f"❌ Ошибка в extract_customer_info: {e}", exc_info=True)
-        # Возвращаем базовую структуру в случае ошибки
         model = webhook_data.get('model', {})
         return {
             'email': model.get('Email', '') or model.get('email', ''),
@@ -165,12 +182,13 @@ def extract_customer_info(webhook_data):
             'amount': float(model.get('Amount', 0) or model.get('amount', 0)),
             'event_title': model.get('Event', {}).get('Title', '') or model.get('event', {}).get('title', ''),
             'tickets_count': 0,
-            'is_agree_ads': False,  # По умолчанию
+            'ticket_type': '',
+            'is_agree_ads': False,
         }
 
 
 def create_lead_name(event_data, order_id):
-    """Создает название для сделки"""
+    """Создает название для сделки (старая воронка)"""
     event_title = event_data.get('Title') or event_data.get('title', 'Мероприятие')
 
     if len(event_title) > 100:
@@ -191,7 +209,7 @@ def should_process_order(webhook_data):
 
 def format_name_for_amocrm(full_name):
     """Форматирует имя для amoCRM"""
-    if not full_name or full_name == "Покупатель билета" or full_name == "Клиент Radario":
+    if not full_name or full_name in ("Покупатель билета", "Клиент Radario"):
         return "Клиент Radario"
 
     parts = [p.strip() for p in str(full_name).split() if p.strip()]

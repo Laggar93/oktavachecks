@@ -8,8 +8,14 @@ class WebhookLog(models.Model):
         ('error', 'Ошибка'),
     ]
 
+    PIPELINE_CHOICES = [
+        ('default', 'Основная'),
+        ('klaster', 'Кластер'),
+    ]
+
     payload = models.JSONField(verbose_name='Данные вебхука')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    pipeline = models.CharField(max_length=20, choices=PIPELINE_CHOICES, default='default', verbose_name='Воронка')
     error_message = models.TextField(blank=True, null=True)
     amocrm_contact_id = models.IntegerField(blank=True, null=True)
     amocrm_lead_id = models.IntegerField(blank=True, null=True)
@@ -22,4 +28,4 @@ class WebhookLog(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"Webhook {self.id} - {self.status}"
+        return f"Webhook {self.id} ({self.get_pipeline_display()}) - {self.status}"

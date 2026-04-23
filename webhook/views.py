@@ -6,6 +6,7 @@ from django.views.decorators.http import require_http_methods
 from django.utils import timezone
 from .models import WebhookLog
 from .amocrm_client import AmoCRMClient
+from .amocrm_client_klaster import AmoCRMClientKlaster
 from .utils import verify_radario_webhook, extract_customer_info, create_lead_name, should_process_order
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 @csrf_exempt
 @require_http_methods(["POST"])
 def radario_webhook(request):
+    """Вебхук для старой воронки"""
 
     raw_body = request.body.decode('utf-8')
     logger.info(f"Received Radario webhook: {raw_body[:500]}...")
@@ -44,18 +46,16 @@ def radario_webhook(request):
 
         contact = amocrm.find_contact_by_email(customer_info['email'])
 
-        # Найдите место, где создается/обновляется контакт
         if contact:
             contact_id = contact['id']
             logger.info(f"Found existing contact: {contact_id}")
-            # Обновляем контакт (например, согласие на рассылку могло измениться)
             amocrm.update_contact(contact_id, customer_info)
         else:
             contact = amocrm.create_contact(
                 email=customer_info['email'],
                 name=customer_info['name'],
                 phone=customer_info['phone'],
-                is_agree_ads=customer_info.get('is_agree_ads', False)  # Передаем согласие
+                is_agree_ads=customer_info.get('is_agree_ads', False)
             )
             contact_id = contact['id']
             logger.info(f"Created new contact: {contact_id}")
@@ -76,7 +76,6 @@ def radario_webhook(request):
                 amocrm.update_lead_for_refund(lead_id, customer_info)
             else:
                 logger.info(f"Updating existing lead: {lead_id}")
-
                 if status == 'Paid' and payment_status == 'Paid':
                     amocrm.update_lead(lead_id, customer_info, status_id=77419554)
                 else:
@@ -84,19 +83,11 @@ def radario_webhook(request):
         else:
             lead_name = create_lead_name(event_data, customer_info['order_id'])
 
-            if status == 'Refunded' or payment_status == 'Refund':
-                logger.info(f"Creating new lead for refund: {customer_info['order_id']}")
-                lead = amocrm.create_lead_with_custom_fields(
-                    contact_id=contact_id,
-                    customer_info=customer_info
-                )
-            else:
-                logger.info(f"Creating new lead: {customer_info['order_id']}")
-                lead = amocrm.create_lead_with_custom_fields(
-                    contact_id=contact_id,
-                    customer_info=customer_info
-                )
-
+            logger.info(f"Creating new lead: {customer_info['order_id']}")
+            lead = amocrm.create_lead_with_custom_fields(
+                contact_id=contact_id,
+                customer_info=customer_info
+            )
             lead_id = lead['id']
 
         webhook_log.status = 'success'
@@ -113,6 +104,105 @@ def radario_webhook(request):
 
     except Exception as e:
         logger.error(f"Webhook processing error: {e}", exc_info=True)
+        webhook_log.status = 'error'
+        webhook_log.error_message = str(e)
+        webhook_log.save()
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def radario_webhook_klaster(request):
+    """Вебхук для воронки Кластер (pipeline_id: 10765454)"""
+
+    raw_body = request.body.decode('utf-8')
+    logger.info(f"[Кластер] Received Radario webhook: {raw_body[:500]}...")
+
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError as e:
+        logger.error(f"[Кластер] Invalid JSON: {e}")
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON'}, status=400)
+
+    webhook_log = WebhookLog.objects.create(payload=payload, pipeline='klaster')
+
+    try:
+        if not verify_radario_webhook(payload):
+            webhook_log.status = 'error'
+            webhook_log.error_message = 'Missing required fields'
+            webhook_log.save()
+            return JsonResponse({'status': 'error', 'message': 'Missing required fields'}, status=400)
+
+        customer_info = extract_customer_info(payload)
+        if not customer_info['email']:
+            webhook_log.status = 'error'
+            webhook_log.error_message = 'No email provided'
+            webhook_log.save()
+            return JsonResponse({'status': 'error', 'message': 'No email provided'}, status=400)
+
+        amocrm = AmoCRMClientKlaster()
+
+        # Ищем контакт по email, затем по телефону
+        contact = amocrm.find_contact_by_email(customer_info['email'])
+
+        if not contact and customer_info.get('phone'):
+            contact = amocrm.find_contact_by_phone(customer_info['phone'])
+            if contact:
+                logger.info(f"[Кластер] Контакт найден по телефону: {contact['id']}")
+
+        if contact:
+            contact_id = contact['id']
+            logger.info(f"[Кластер] Found existing contact: {contact_id}")
+            amocrm.update_contact(contact_id, customer_info)
+        else:
+            contact = amocrm.create_contact(
+                email=customer_info['email'],
+                name=customer_info['name'],
+                phone=customer_info['phone'],
+                is_agree_ads=customer_info.get('is_agree_ads', False)
+            )
+            contact_id = contact['id']
+            logger.info(f"[Кластер] Created new contact: {contact_id}")
+
+        status = customer_info.get('status')
+        payment_status = customer_info.get('payment_system_status')
+
+        existing_lead = amocrm.find_lead_by_order_id(customer_info['order_id'])
+
+        if existing_lead:
+            lead_id = existing_lead['id']
+
+            if status == 'Refunded' or payment_status == 'Refund':
+                logger.info(f"[Кластер] Processing refund for existing lead: {lead_id}")
+                amocrm.update_lead_for_refund(lead_id, customer_info)
+            else:
+                logger.info(f"[Кластер] Updating existing lead: {lead_id}")
+                if status == 'Paid' and payment_status == 'Paid':
+                    amocrm.update_lead(lead_id, customer_info, status_id=84775518)
+                else:
+                    amocrm.update_lead(lead_id, customer_info)
+        else:
+            logger.info(f"[Кластер] Creating new lead: {customer_info['order_id']}")
+            lead = amocrm.create_lead_with_custom_fields(
+                contact_id=contact_id,
+                customer_info=customer_info
+            )
+            lead_id = lead['id']
+
+        webhook_log.status = 'success'
+        webhook_log.amocrm_contact_id = contact_id
+        webhook_log.amocrm_lead_id = lead_id
+        webhook_log.processed_at = timezone.now()
+        webhook_log.save()
+
+        return JsonResponse({
+            'status': 'success',
+            'contact_id': contact_id,
+            'lead_id': lead_id
+        })
+
+    except Exception as e:
+        logger.error(f"[Кластер] Webhook processing error: {e}", exc_info=True)
         webhook_log.status = 'error'
         webhook_log.error_message = str(e)
         webhook_log.save()
