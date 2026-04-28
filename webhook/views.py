@@ -143,9 +143,16 @@ def radario_webhook_klaster(request):
         amocrm = AmoCRMClientKlaster()
 
         # Ищем контакт по email, затем по телефону
-        contact = amocrm.find_contact_by_email(customer_info['email'])
+        contact = None
+        email_search_ok = True
 
-        if not contact and customer_info.get('phone'):
+        try:
+            contact = amocrm.find_contact_by_email(customer_info['email'])
+        except Exception as e:
+            logger.warning(f"[Кластер] Поиск по email не удался, пропускаем поиск по телефону: {e}")
+            email_search_ok = False
+
+        if email_search_ok and not contact and customer_info.get('phone'):
             contact = amocrm.find_contact_by_phone(customer_info['phone'])
             if contact:
                 logger.info(f"[Кластер] Контакт найден по телефону: {contact['id']}")
